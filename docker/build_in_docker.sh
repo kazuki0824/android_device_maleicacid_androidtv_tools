@@ -34,19 +34,18 @@ docker run --rm -it \
   -w /workspace \
   openstf/aosp:jdk8 \
   bash -lc "
-    set -eo pipefail
     if [[ \"\${NO_AB:-0}\" == 1 ]]; then
       export AB_OTA_UPDATER=false
       echo '[build] AB_OTA_UPDATER=false (non-A/B)'
     fi
 
     source build/envsetup.sh
-    set -u
     
     lunch | grep -E 'r86s_tv_virtio|qemu_tv_virtio'
     lunch ${PRODUCT}-${RELEASE}-userdebug
 
     # Installer image: espimage-install (.img).
+    set -e
     m -j\$(nproc) espimage-install
 
     # Flashable zip to apply in recovery.
