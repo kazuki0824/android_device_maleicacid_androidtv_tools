@@ -18,7 +18,15 @@ if [[ -z "${PRODUCT}" ]]; then
   exit 1
 fi
 
-TOP="$(cd "$(dirname "$0")/../.." && pwd)"
+# Find Android TOP by walking upwards until build/envsetup.sh exists.
+TOP="$(cd "$(dirname "$0")" && pwd)"
+while [[ "${TOP}" != "/" && ! -f "${TOP}/build/envsetup.sh" ]]; do
+  TOP="$(dirname "${TOP}")"
+done
+if [[ ! -f "${TOP}/build/envsetup.sh" ]]; then
+  echo "[!] Could not find Android top (build/envsetup.sh). Run from within the repo-synced tree." >&2
+  exit 1
+fi
 
 docker run --rm -it \
   -v "${TOP}:/workspace" \
@@ -31,7 +39,9 @@ docker run --rm -it \
       echo '[build] AB_OTA_UPDATER=false (non-A/B)'
     fi
 
+    set +u
     source build/envsetup.sh
+    set -u
     lunch ${PRODUCT}-userdebug
 
     # Installer image: espimage-install (.img).
