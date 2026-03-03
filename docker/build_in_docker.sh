@@ -42,7 +42,11 @@ docker run --rm -it \
     set +u
     source build/envsetup.sh
     set -u
-    lunch ${PRODUCT}-userdebug
+    
+    lunch | grep -E 'r86s_tv_virtio|qemu_tv_virtio'
+    
+    RELEASE=lineage
+    lunch ${PRODUCT}-${RELEASE}-userdebug
 
     # Installer image: espimage-install (.img).
     m -j\$(nproc) espimage-install
