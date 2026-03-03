@@ -23,7 +23,7 @@ TOP="$(cd "$(dirname "$0")/../.." && pwd)"
 docker run --rm -it \
   -v "${TOP}:/workspace" \
   -w /workspace \
-  openstf/docker-aosp \
+  openstf/aosp:jdk8 \
   bash -lc "
     set -euo pipefail
     if [[ \"\${NO_AB:-0}\" == 1 ]]; then
