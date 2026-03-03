@@ -13,6 +13,7 @@ set -euo pipefail
 #   NO_AB=1 ... build non-A/B images (smaller disk footprint)
 
 PRODUCT="${1:-}"
+RELEASE=lineage
 if [[ -z "${PRODUCT}" ]]; then
   echo "Usage: $0 <r86s_tv_virtio|qemu_tv_virtio>" >&2
   exit 1
@@ -44,8 +45,6 @@ docker run --rm -it \
     set -u
     
     lunch | grep -E 'r86s_tv_virtio|qemu_tv_virtio'
-    
-    RELEASE=lineage
     lunch ${PRODUCT}-${RELEASE}-userdebug
 
     # Installer image: espimage-install (.img).
