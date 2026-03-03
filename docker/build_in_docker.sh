@@ -34,13 +34,12 @@ docker run --rm -it \
   -w /workspace \
   openstf/aosp:jdk8 \
   bash -lc "
-    set -euo pipefail
+    set -eo pipefail
     if [[ \"\${NO_AB:-0}\" == 1 ]]; then
       export AB_OTA_UPDATER=false
       echo '[build] AB_OTA_UPDATER=false (non-A/B)'
     fi
 
-    set +u
     source build/envsetup.sh
     set -u
     
