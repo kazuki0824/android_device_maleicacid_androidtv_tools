@@ -46,8 +46,10 @@ docker run --rm -it \
     lunch lineage_virtio_x86_64_tv-ap2a-userdebug
     #lunch ${PRODUCT}-${RELEASE}-userdebug
 
-    # Installer image: espimage-install (.img).
     set -e
+    # microG workaround
+    rm vendor/maleicacid/microg/upstream/GmsCore/Android.mk
+    # Installer image: espimage-install (.img).
     m -j\$(nproc) espimage-install
 
     # Flashable zip to apply in recovery.
