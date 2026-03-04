@@ -43,11 +43,7 @@ docker run --rm -it \
     
     #lunch | grep -E 'r86s_tv_virtio|qemu_tv_virtio'
     echo ${PRODUCT}-${RELEASE}-userdebug
-
-    set -x
-    breakfast virtio_x86_64_tv
-    set +x
-    
+    lunch lineage_virtio_x86_64_tv-ap2a-userdebug
     #lunch ${PRODUCT}-${RELEASE}-userdebug
 
     # Installer image: espimage-install (.img).
