@@ -48,7 +48,7 @@ docker run --rm -it \
 
     set -e
     # microG workaround
-    rm vendor/maleicacid/microg/upstream/GmsCore/Android.mk
+    rm vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
     # Installer image: espimage-install (.img).
     m -j\$(nproc) espimage-install
 
