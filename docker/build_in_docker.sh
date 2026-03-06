@@ -19,20 +19,14 @@ if [[ -z "${PRODUCT}" ]]; then
   exit 1
 fi
 
-# Find Android TOP by walking upwards until build/envsetup.sh exists.
-TOP="$(cd "$(dirname "$0")" && pwd)"
-while [[ "${TOP}" != "/" && ! -f "${TOP}/build/envsetup.sh" ]]; do
-  TOP="$(dirname "${TOP}")"
-done
-if [[ ! -f "${TOP}/build/envsetup.sh" ]]; then
-  echo "[!] Could not find Android top (build/envsetup.sh). Run from within the repo-synced tree." >&2
-  exit 1
-fi
-
+pushd $(dirname "$(realpath "${BASH_SOURCE:-0}")")
+docker build -t aosp-build .
+popd
 docker run --rm -it \
-  -v "${TOP}:/workspace" \
+  -v "$PWD/ccache:/home/builder/.ccache" \
+  -v "$(pwd):/workspace" \
   -w /workspace \
-  openstf/aosp:jdk8 \
+  aosp-build \
   bash -lc "
     if [[ \"\${NO_AB:-0}\" == 1 ]]; then
       export AB_OTA_UPDATER=false
