@@ -20,9 +20,9 @@ if [[ -z "${PRODUCT}" ]]; then
 fi
 
 pushd $(dirname "$(realpath "${BASH_SOURCE:-0}")")
-docker build -t aosp-build .
+sudo docker build -t aosp-build .
 popd
-docker run --rm -it \
+sudo docker run --rm -it \
   -v "$PWD/ccache:/home/builder/.ccache" \
   -v "$(pwd):/workspace" \
   -w /workspace \
@@ -42,7 +42,7 @@ docker run --rm -it \
 
     set -e
     # microG workaround
-    rm vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
+    rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
     # Installer image: espimage-install (.img).
     m -j\$(nproc) espimage-install
 
