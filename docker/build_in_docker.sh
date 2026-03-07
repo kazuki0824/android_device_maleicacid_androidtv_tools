@@ -22,8 +22,9 @@ fi
 pushd $(dirname "$(realpath "${BASH_SOURCE:-0}")")
 sudo docker build -t aosp-build .
 popd
+mkdir -p ./ccache
 sudo docker run --rm -it \
-  -v "$PWD/ccache:/home/builder/.ccache" \
+  --mount "type=bind,src=$PWD/ccache,dst=/home/builder/.ccache" \
   -v "$(pwd):/workspace" \
   -w /workspace \
   aosp-build \
