@@ -5,8 +5,8 @@ set -euo pipefail
 cd $(dirname "$0")
 SCRIPTDIR=$(dirname "$(realpath "${BASH_SOURCE:-0}")")
 
-mkdir ./build-work2 || true
-pushd ./build-work2
+mkdir ./build-work || true
+pushd ./build-work
 repo init -u https://github.com/kazuki0824/android -b lineage-21.0
 repo sync -j$(nproc) -c -d --force-sync
 $SCRIPTDIR/docker/build_in_docker.sh r86s_tv_virtio
