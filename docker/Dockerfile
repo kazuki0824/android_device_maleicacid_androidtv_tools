@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lib32readline-dev lib32z1-dev libdw-dev libelf-dev libgnutls28-dev \
     lz4 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
     schedtool squashfs-tools xsltproc zip zlib1g-dev \
-    file unzip openssh-client \
+    file unzip openssh-client qemu-utils \
  && rm -rf /var/lib/apt/lists/* \
  && locale-gen en_US.UTF-8
 
