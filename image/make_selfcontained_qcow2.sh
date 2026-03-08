@@ -23,7 +23,7 @@ set -euo pipefail
 #   --nbd /dev/nbd0     Which NBD device to use (default: /dev/nbd0)
 #   --out <path>        Output qcow2 path (default: out/target/product/<p>/androidtv-<p>.qcow2)
 
-PRODUCT="${1:-}"
+PRODUCT="lineage_${1:-}"
 shift || true
 
 if [[ -z "${PRODUCT}" ]]; then
