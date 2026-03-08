@@ -1,31 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# make_selfcontained_qcow2.sh (fixed)
-#
-# Create ONE qcow2 file which contains:
-#   - a bootable installer environment (from espimage-install .img)
-#   - an INSTALL volume (FAT) holding a flashable zip
-#
-# Key fix:
-# - Android build outputs are usually under out/target/product/<TARGET_DEVICE>/ (not PRODUCT_NAME),
-#   so we locate OUT_DIR by searching for produced files under out/target/product/*.
+# make_selfcontained_qcow2.v2.sh
+# - Locates OUT_DIR by searching under an OUT_BASE that contains target/product/<device>/...
+# - Supports separated OUT_DIR_COMMON_BASE (e.g., out-<product>).
 #
 # Usage:
-#   sudo make_selfcontained_qcow2.sh <product>
-#     <product> may be r86s_tv_virtio / qemu_tv_virtio / lineage_r86s_tv_virtio / lineage_qemu_tv_virtio
+#   sudo device/maleicacid/androidtv-tools/image/make_selfcontained_qcow2.v2.sh <product> [options]
 #
 # Options:
-#   --size 32G          Total virtual size for qcow2 (default: 32G)
-#   --install-mib 2048  Size of INSTALL partition (default: 2048 MiB)
-#   --nbd /dev/nbd0     Which NBD device to use (default: /dev/nbd0)
-#   --out <path>        Output qcow2 path (default: <OUT_DIR>/androidtv-<product>.qcow2)
-#   --out-dir <path>    Override OUT_DIR (directory containing the produced .img/.zip)
+#   --out-base <dir>    Base directory that contains target/product (default: auto: out-<product>, out)
+#   --out-dir <dir>     Directory that contains produced .img/.zip (overrides search)
+#   --size 32G
+#   --install-mib 2048
+#   --nbd /dev/nbd0
+#   --out <path>
 
 ARG="${1:-}"
 shift || true
 if [[ -z "${ARG}" ]]; then
-  echo "Usage: $0 <r86s_tv_virtio|qemu_tv_virtio|lineage_r86s_tv_virtio|lineage_qemu_tv_virtio> [--size 32G] [--install-mib 2048] [--nbd /dev/nbd0] [--out path] [--out-dir path]" >&2
+  echo "Usage: $0 <r86s_tv_virtio|qemu_tv_virtio|lineage_r86s_tv_virtio|lineage_qemu_tv_virtio> [--out-base dir] [--out-dir dir] [--size 32G] [--install-mib 2048] [--nbd /dev/nbd0] [--out path]" >&2
   exit 1
 fi
 
@@ -38,6 +32,7 @@ SIZE="32G"
 INSTALL_MIB="2048"
 NBD_DEV="/dev/nbd0"
 OUT_PATH=""
+OUT_BASE_OVERRIDE=""
 OUT_DIR_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
@@ -46,61 +41,85 @@ while [[ $# -gt 0 ]]; do
     --install-mib) INSTALL_MIB="$2"; shift 2;;
     --nbd) NBD_DEV="$2"; shift 2;;
     --out) OUT_PATH="$2"; shift 2;;
+    --out-base) OUT_BASE_OVERRIDE="$2"; shift 2;;
     --out-dir) OUT_DIR_OVERRIDE="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 1;;
   esac
 done
 
-TOP="$(cd "$(dirname "$0")/../.." && pwd)"
-OUT_BASE="${TOP}/out/target/product"
+find_android_top() {
+  local d
+  d="$(cd "$(dirname "$0")" && pwd)"
+  while [[ "${d}" != "/" ]]; do
+    if [[ -f "${d}/build/envsetup.sh" ]]; then
+      echo "${d}"
+      return 0
+    fi
+    d="$(dirname "${d}")"
+  done
+  return 1
+}
 
-if [[ ! -d "${OUT_BASE}" ]]; then
-  echo "[!] OUT_BASE not found: ${OUT_BASE}" >&2
+TOP="$(find_android_top)" || {
+  echo "[!] Could not find Android TOP (build/envsetup.sh). Run inside the repo-synced tree." >&2
   exit 1
+}
+
+declare -a CANDIDATES=()
+if [[ -n "${OUT_BASE_OVERRIDE}" ]]; then
+  CANDIDATES+=("${OUT_BASE_OVERRIDE}")
+else
+  CANDIDATES+=("${TOP}/out-${PRODUCT}")
+  CANDIDATES+=("${TOP}/out")
 fi
 
 OUT_DIR=""
 if [[ -n "${OUT_DIR_OVERRIDE}" ]]; then
   OUT_DIR="${OUT_DIR_OVERRIDE}"
 else
-  # Prefer otapackage output: <product>*-ota.zip (often written under <TARGET_DEVICE>/)
-  OTA_ZIP="$(find "${OUT_BASE}" -maxdepth 2 -type f -name "${PRODUCT}*-ota.zip" -print -quit 2>/dev/null || true)"
-  if [[ -n "${OTA_ZIP}" ]]; then
-    OUT_DIR="$(dirname "${OTA_ZIP}")"
-  else
-    # fallback: if a dir named after PRODUCT exists
-    if [[ -d "${OUT_BASE}/${PRODUCT}" ]]; then
-      OUT_DIR="${OUT_BASE}/${PRODUCT}"
+  for OUT_BASE in "${CANDIDATES[@]}"; do
+    if [[ -d "${OUT_BASE}/target/product" ]]; then
+      OTA_ZIP="$(find "${OUT_BASE}/target/product" -maxdepth 2 -type f -name "${PRODUCT}*-ota.zip" -print -quit 2>/dev/null || true)"
+      if [[ -n "${OTA_ZIP}" ]]; then
+        OUT_DIR="$(dirname "${OTA_ZIP}")"
+        break
+      fi
+      UNOFF_ZIP="$(find "${OUT_BASE}/target/product" -maxdepth 2 -type f -name "lineage-*-UNOFFICIAL-*.zip" -print -quit 2>/dev/null || true)"
+      if [[ -n "${UNOFF_ZIP}" ]]; then
+        OUT_DIR="$(dirname "${UNOFF_ZIP}")"
+        break
+      fi
+      IMG="$(find "${OUT_BASE}/target/product" -maxdepth 2 -type f -name "lineage-*-UNOFFICIAL-*.img" -print -quit 2>/dev/null || true)"
+      if [[ -n "${IMG}" ]]; then
+        OUT_DIR="$(dirname "${IMG}")"
+        break
+      fi
     fi
-  fi
+  done
 fi
 
 if [[ -z "${OUT_DIR}" || ! -d "${OUT_DIR}" ]]; then
   echo "[!] Could not determine OUT_DIR for product: ${PRODUCT}" >&2
-  echo "    Searched for: ${PRODUCT}*-ota.zip under ${OUT_BASE}" >&2
-  echo "    You can pass: --out-dir <out/target/product/<device>>" >&2
+  echo "    Tried OUT_BASE candidates:" >&2
+  for c in "${CANDIDATES[@]}"; do
+    echo "      - ${c}" >&2
+  done
+  echo "    Hint: pass --out-base <dir> (contains target/product) or --out-dir <dir> (contains .img/.zip)" >&2
   exit 1
 fi
 
-# Prefer recovery-installable zip (bacon) if present; otherwise use *-ota.zip.
+INSTALL_IMG="$(find "${OUT_DIR}" -maxdepth 1 -type f -name "lineage-*-UNOFFICIAL-*.img" -print -quit 2>/dev/null || true)"
 FLASH_ZIP="$(find "${OUT_DIR}" -maxdepth 1 -type f -name "lineage-*-UNOFFICIAL-*.zip" -print -quit 2>/dev/null || true)"
 if [[ -z "${FLASH_ZIP}" ]]; then
   FLASH_ZIP="$(find "${OUT_DIR}" -maxdepth 1 -type f -name "${PRODUCT}*-ota.zip" -print -quit 2>/dev/null || true)"
 fi
 
-# espimage-install output (device-suffixed in many trees)
-INSTALL_IMG="$(find "${OUT_DIR}" -maxdepth 1 -type f -name "lineage-*-UNOFFICIAL-*.img" -print -quit 2>/dev/null || true)"
-
 if [[ -z "${INSTALL_IMG}" ]]; then
   echo "[!] espimage-install output not found in: ${OUT_DIR}" >&2
-  echo "    Expected: lineage-*-UNOFFICIAL-*.img" >&2
   exit 1
 fi
 if [[ -z "${FLASH_ZIP}" ]]; then
   echo "[!] flashable zip not found in: ${OUT_DIR}" >&2
-  echo "    Expected one of:" >&2
-  echo "      - lineage-*-UNOFFICIAL-*.zip (preferred)" >&2
-  echo "      - ${PRODUCT}*-ota.zip (fallback)" >&2
   exit 1
 fi
 

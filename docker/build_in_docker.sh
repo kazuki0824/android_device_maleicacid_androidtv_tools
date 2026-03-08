@@ -12,10 +12,10 @@ set -euo pipefail
 # Optional:
 #   NO_AB=1 ... build non-A/B images (smaller disk footprint)
 
-PRODUCT="lineage_${1:-}"
+PRODUCT="${1:-}"
 RELEASE=ap2a
 if [[ -z "${PRODUCT}" ]]; then
-  echo "Usage: $0 <r86s_tv_virtio|qemu_tv_virtio>" >&2
+  echo "Usage: $0 <lineage_r86s_tv_virtio|lineage_qemu_tv_virtio>" >&2
   exit 1
 fi
 
@@ -29,6 +29,7 @@ sudo docker run --rm -it \
   -w /workspace \
   aosp-build \
   bash -lc "
+    export OUT_DIR_COMMON_BASE=\${OUT_DIR_COMMON_BASE:-/workspace/out-${PRODUCT}}
     if [[ \"\${NO_AB:-0}\" == 1 ]]; then
       export AB_OTA_UPDATER=false
       echo '[build] AB_OTA_UPDATER=false (non-A/B)'
@@ -55,5 +56,5 @@ sudo docker run --rm -it \
     fi
 
     echo '[build] Done.'
-    echo \"[build] Outputs in: out/target/product/${PRODUCT}\"
+    echo \"[build] Outputs under: \${OUT_DIR_COMMON_BASE}/target/product/*\"
   "
