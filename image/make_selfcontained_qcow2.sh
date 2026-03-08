@@ -1,40 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# requirement 7* helper:
+# make_selfcontained_qcow2.sh (fixed)
+#
 # Create ONE qcow2 file which contains:
 #   - a bootable installer environment (from espimage-install .img)
-#   - an INSTALL volume (FAT) holding the flashable zip
+#   - an INSTALL volume (FAT) holding a flashable zip
 #
-# Goal:
-#   User receives ONLY this qcow2, boots it once, installs via Recovery:
-#     Apply update -> Choose INSTALL -> select lineage-*-UNOFFICIAL-<target>.zip
-#   Then the same qcow2 boots Android afterwards.
+# Key fix:
+# - Android build outputs are usually under out/target/product/<TARGET_DEVICE>/ (not PRODUCT_NAME),
+#   so we locate OUT_DIR by searching for produced files under out/target/product/*.
 #
-# Note:
-# This script uses qemu-nbd + partitioning tools (sgdisk/mkfs.vfat). Run on Linux host.
-#
-# Usage (outside container, from ANDROID TOP):
-#   sudo device/maleicacid/androidtv-tools/image/make_selfcontained_qcow2.sh r86s_tv_virtio
+# Usage:
+#   sudo make_selfcontained_qcow2.sh <product>
+#     <product> may be r86s_tv_virtio / qemu_tv_virtio / lineage_r86s_tv_virtio / lineage_qemu_tv_virtio
 #
 # Options:
 #   --size 32G          Total virtual size for qcow2 (default: 32G)
 #   --install-mib 2048  Size of INSTALL partition (default: 2048 MiB)
 #   --nbd /dev/nbd0     Which NBD device to use (default: /dev/nbd0)
-#   --out <path>        Output qcow2 path (default: out/target/product/<p>/androidtv-<p>.qcow2)
+#   --out <path>        Output qcow2 path (default: <OUT_DIR>/androidtv-<product>.qcow2)
+#   --out-dir <path>    Override OUT_DIR (directory containing the produced .img/.zip)
 
-PRODUCT="lineage_${1:-}"
+ARG="${1:-}"
 shift || true
-
-if [[ -z "${PRODUCT}" ]]; then
-  echo "Usage: $0 <r86s_tv_virtio|qemu_tv_virtio> [--size 32G] [--install-mib 2048] [--nbd /dev/nbd0] [--out path]" >&2
+if [[ -z "${ARG}" ]]; then
+  echo "Usage: $0 <r86s_tv_virtio|qemu_tv_virtio|lineage_r86s_tv_virtio|lineage_qemu_tv_virtio> [--size 32G] [--install-mib 2048] [--nbd /dev/nbd0] [--out path] [--out-dir path]" >&2
   exit 1
+fi
+
+PRODUCT="${ARG}"
+if [[ "${PRODUCT}" != lineage_* ]]; then
+  PRODUCT="lineage_${PRODUCT}"
 fi
 
 SIZE="32G"
 INSTALL_MIB="2048"
 NBD_DEV="/dev/nbd0"
 OUT_PATH=""
+OUT_DIR_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,24 +46,61 @@ while [[ $# -gt 0 ]]; do
     --install-mib) INSTALL_MIB="$2"; shift 2;;
     --nbd) NBD_DEV="$2"; shift 2;;
     --out) OUT_PATH="$2"; shift 2;;
+    --out-dir) OUT_DIR_OVERRIDE="$2"; shift 2;;
     *) echo "Unknown arg: $1" >&2; exit 1;;
   esac
 done
 
 TOP="$(cd "$(dirname "$0")/../.." && pwd)"
-OUT_DIR="${TOP}/out/target/product/${PRODUCT}"
+OUT_BASE="${TOP}/out/target/product"
 
-INSTALL_IMG="$(ls -1 "${OUT_DIR}"/lineage-*-UNOFFICIAL-"${PRODUCT}".img 2>/dev/null | head -n1 || true)"
-FLASH_ZIP="$(ls -1 "${OUT_DIR}"/lineage-*-UNOFFICIAL-"${PRODUCT}".zip 2>/dev/null | head -n1 || true)"
+if [[ ! -d "${OUT_BASE}" ]]; then
+  echo "[!] OUT_BASE not found: ${OUT_BASE}" >&2
+  exit 1
+fi
+
+OUT_DIR=""
+if [[ -n "${OUT_DIR_OVERRIDE}" ]]; then
+  OUT_DIR="${OUT_DIR_OVERRIDE}"
+else
+  # Prefer otapackage output: <product>*-ota.zip (often written under <TARGET_DEVICE>/)
+  OTA_ZIP="$(find "${OUT_BASE}" -maxdepth 2 -type f -name "${PRODUCT}*-ota.zip" -print -quit 2>/dev/null || true)"
+  if [[ -n "${OTA_ZIP}" ]]; then
+    OUT_DIR="$(dirname "${OTA_ZIP}")"
+  else
+    # fallback: if a dir named after PRODUCT exists
+    if [[ -d "${OUT_BASE}/${PRODUCT}" ]]; then
+      OUT_DIR="${OUT_BASE}/${PRODUCT}"
+    fi
+  fi
+fi
+
+if [[ -z "${OUT_DIR}" || ! -d "${OUT_DIR}" ]]; then
+  echo "[!] Could not determine OUT_DIR for product: ${PRODUCT}" >&2
+  echo "    Searched for: ${PRODUCT}*-ota.zip under ${OUT_BASE}" >&2
+  echo "    You can pass: --out-dir <out/target/product/<device>>" >&2
+  exit 1
+fi
+
+# Prefer recovery-installable zip (bacon) if present; otherwise use *-ota.zip.
+FLASH_ZIP="$(find "${OUT_DIR}" -maxdepth 1 -type f -name "lineage-*-UNOFFICIAL-*.zip" -print -quit 2>/dev/null || true)"
+if [[ -z "${FLASH_ZIP}" ]]; then
+  FLASH_ZIP="$(find "${OUT_DIR}" -maxdepth 1 -type f -name "${PRODUCT}*-ota.zip" -print -quit 2>/dev/null || true)"
+fi
+
+# espimage-install output (device-suffixed in many trees)
+INSTALL_IMG="$(find "${OUT_DIR}" -maxdepth 1 -type f -name "lineage-*-UNOFFICIAL-*.img" -print -quit 2>/dev/null || true)"
 
 if [[ -z "${INSTALL_IMG}" ]]; then
-  echo "[!] espimage-install output not found: ${OUT_DIR}/lineage-*-UNOFFICIAL-${PRODUCT}.img" >&2
-  echo "    Run: device/maleicacid/androidtv-tools/docker/build_in_docker.sh ${PRODUCT}" >&2
+  echo "[!] espimage-install output not found in: ${OUT_DIR}" >&2
+  echo "    Expected: lineage-*-UNOFFICIAL-*.img" >&2
   exit 1
 fi
 if [[ -z "${FLASH_ZIP}" ]]; then
-  echo "[!] flashable zip not found: ${OUT_DIR}/lineage-*-UNOFFICIAL-${PRODUCT}.zip" >&2
-  echo "    Ensure otapackage/bacon was built." >&2
+  echo "[!] flashable zip not found in: ${OUT_DIR}" >&2
+  echo "    Expected one of:" >&2
+  echo "      - lineage-*-UNOFFICIAL-*.zip (preferred)" >&2
+  echo "      - ${PRODUCT}*-ota.zip (fallback)" >&2
   exit 1
 fi
 
@@ -67,6 +108,8 @@ if [[ -z "${OUT_PATH}" ]]; then
   OUT_PATH="${OUT_DIR}/androidtv-${PRODUCT}.qcow2"
 fi
 
+echo "[*] Product         : ${PRODUCT}"
+echo "[*] OUT_DIR         : ${OUT_DIR}"
 echo "[*] Installer image : ${INSTALL_IMG}"
 echo "[*] Flashable zip   : ${FLASH_ZIP}"
 echo "[*] Output qcow2    : ${OUT_PATH}"
@@ -108,13 +151,4 @@ echo ""
 echo "============================================================"
 echo "[OK] Self-contained qcow2 created:"
 echo "     ${OUT_PATH}"
-echo ""
-echo "First boot (inside VM):"
-echo "  1) It should boot into installer/recovery."
-echo "  2) In Recovery:"
-echo "       Factory reset -> Format data"
-echo "       Apply update -> Choose INSTALL -> select the copied zip"
-echo "  3) Reboot system now"
-echo ""
-echo "After install, the SAME qcow2 should boot Android."
 echo "============================================================"
