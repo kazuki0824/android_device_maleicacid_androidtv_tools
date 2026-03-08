@@ -12,7 +12,7 @@ set -euo pipefail
 # Optional:
 #   NO_AB=1 ... build non-A/B images (smaller disk footprint)
 
-PRODUCT="${1:-}"
+PRODUCT="lineage_${1:-}"
 RELEASE=ap2a
 if [[ -z "${PRODUCT}" ]]; then
   echo "Usage: $0 <r86s_tv_virtio|qemu_tv_virtio>" >&2
@@ -36,10 +36,8 @@ sudo docker run --rm -it \
 
     source build/envsetup.sh
     
-    #lunch | grep -E 'r86s_tv_virtio|qemu_tv_virtio'
     echo ${PRODUCT}-${RELEASE}-userdebug
-    lunch lineage_virtio_x86_64_tv-ap2a-userdebug
-    #lunch ${PRODUCT}-${RELEASE}-userdebug
+    lunch ${PRODUCT}-${RELEASE}-userdebug
 
     set -e
     # microG workaround
