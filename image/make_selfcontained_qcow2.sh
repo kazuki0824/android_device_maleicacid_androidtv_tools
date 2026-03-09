@@ -1,16 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# make_selfcontained_qcow2.v2.sh
-# - Locates OUT_DIR by searching under an OUT_BASE that contains target/product/<device>/...
-# - Supports separated OUT_DIR_COMMON_BASE (e.g., out-<product>).
+# make_selfcontained_qcow2.v3.sh
+#
+# Fixes vs older versions:
+# 1) OUT_DIR discovery works with OUT_DIR_COMMON_BASE separation (out-<product>) AND with nested
+#    layouts (some builds place outputs under OUT_DIR_COMMON_BASE/<topname>/target/product/...).
+# 2) Supports both GPT and MBR (dos) installer images:
+#    - GPT: use sgdisk to add INSTALL partition
+#    - MBR: use sfdisk to append a FAT32 partition at the end
 #
 # Usage:
-#   sudo device/maleicacid/androidtv-tools/image/make_selfcontained_qcow2.v2.sh <product> [options]
+#   sudo make_selfcontained_qcow2.v3.sh <product> [options]
+#
+# <product> may be:
+#   lineage_r86s_tv_virtio / lineage_qemu_tv_virtio  (recommended)
+#   r86s_tv_virtio / qemu_tv_virtio                  (will be normalized to lineage_<name>)
 #
 # Options:
-#   --out-base <dir>    Base directory that contains target/product (default: auto: out-<product>, out)
-#   --out-dir <dir>     Directory that contains produced .img/.zip (overrides search)
+#   --out-base <dir>    Base directory that contains (or contains */) target/product (default: auto)
+#   --out-dir <dir>     Directory that contains the produced .img/.zip (overrides search)
 #   --size 32G
 #   --install-mib 2048
 #   --nbd /dev/nbd0
@@ -61,8 +70,23 @@ find_android_top() {
 }
 
 TOP="$(find_android_top)" || {
-  echo "[!] Could not find Android TOP (build/envsetup.sh). Run inside the repo-synced tree." >&2
+  echo "[!] Could not find Android TOP (build/envsetup.sh)." >&2
   exit 1
+}
+
+find_product_root() {
+  local base="$1"
+  if [[ -d "${base}/target/product" ]]; then
+    echo "${base}/target/product"
+    return 0
+  fi
+  local d
+  d="$(find "${base}" -maxdepth 2 -type d -path '*/target/product' -print -quit 2>/dev/null || true)"
+  if [[ -n "${d}" ]]; then
+    echo "${d}"
+    return 0
+  fi
+  return 1
 }
 
 declare -a CANDIDATES=()
@@ -74,22 +98,23 @@ else
 fi
 
 OUT_DIR=""
+PRODUCT_ROOT=""
 if [[ -n "${OUT_DIR_OVERRIDE}" ]]; then
   OUT_DIR="${OUT_DIR_OVERRIDE}"
 else
   for OUT_BASE in "${CANDIDATES[@]}"; do
-    if [[ -d "${OUT_BASE}/target/product" ]]; then
-      OTA_ZIP="$(find "${OUT_BASE}/target/product" -maxdepth 2 -type f -name "${PRODUCT}*-ota.zip" -print -quit 2>/dev/null || true)"
+    if PRODUCT_ROOT="$(find_product_root "${OUT_BASE}")"; then
+      OTA_ZIP="$(find "${PRODUCT_ROOT}" -maxdepth 2 -type f -name "${PRODUCT}*-ota.zip" -print -quit 2>/dev/null || true)"
       if [[ -n "${OTA_ZIP}" ]]; then
         OUT_DIR="$(dirname "${OTA_ZIP}")"
         break
       fi
-      UNOFF_ZIP="$(find "${OUT_BASE}/target/product" -maxdepth 2 -type f -name "lineage-*-UNOFFICIAL-*.zip" -print -quit 2>/dev/null || true)"
+      UNOFF_ZIP="$(find "${PRODUCT_ROOT}" -maxdepth 2 -type f -name "lineage-*-UNOFFICIAL-*.zip" -print -quit 2>/dev/null || true)"
       if [[ -n "${UNOFF_ZIP}" ]]; then
         OUT_DIR="$(dirname "${UNOFF_ZIP}")"
         break
       fi
-      IMG="$(find "${OUT_BASE}/target/product" -maxdepth 2 -type f -name "lineage-*-UNOFFICIAL-*.img" -print -quit 2>/dev/null || true)"
+      IMG="$(find "${PRODUCT_ROOT}" -maxdepth 2 -type f -name "lineage-*-UNOFFICIAL-*.img" -print -quit 2>/dev/null || true)"
       if [[ -n "${IMG}" ]]; then
         OUT_DIR="$(dirname "${IMG}")"
         break
@@ -104,7 +129,7 @@ if [[ -z "${OUT_DIR}" || ! -d "${OUT_DIR}" ]]; then
   for c in "${CANDIDATES[@]}"; do
     echo "      - ${c}" >&2
   done
-  echo "    Hint: pass --out-base <dir> (contains target/product) or --out-dir <dir> (contains .img/.zip)" >&2
+  echo "    Hint: pass --out-base <dir> or --out-dir <dir>" >&2
   exit 1
 fi
 
@@ -147,9 +172,41 @@ partprobe "${NBD_DEV}" || true
 sleep 1
 partprobe "${NBD_DEV}" || true
 
-sgdisk -n "0:0:+${INSTALL_MIB}M" -t "0:0700" -c "0:INSTALL" "${NBD_DEV}"
+PTTYPE="$(lsblk -no PTTYPE "${NBD_DEV}" 2>/dev/null | head -n1 || true)"
+SECTOR_SIZE="$(blockdev --getss "${NBD_DEV}")"
+ALIGN_SECTORS="$(( (1024*1024) / SECTOR_SIZE ))"
+INSTALL_SECTORS="$(( (INSTALL_MIB*1024*1024) / SECTOR_SIZE ))"
+
+echo "[*] Partition table : ${PTTYPE:-<unknown>} (sector_size=${SECTOR_SIZE})"
+
+if [[ "${PTTYPE}" == "gpt" ]]; then
+  sgdisk -n "0:0:+${INSTALL_MIB}M" -t "0:0700" -c "0:INSTALL" "${NBD_DEV}"
+else
+  LAST_END="$(
+    sfdisk -d "${NBD_DEV}" 2>/dev/null | awk '
+      /^\/dev\// {
+        start=""; size=""
+        for (i=1; i<=NF; i++) {
+          gsub(/,/, "", $i)
+          if ($i ~ /^start=/) { split($i,a,"="); start=a[2] }
+          if ($i ~ /^size=/)  { split($i,b,"="); size=b[2]  }
+        }
+        if (start != "" && size != "") {
+          end = start + size
+          if (end > max) max = end
+        }
+      }
+      END { if (max=="") max=0; print max }
+    '
+  )"
+  START_SECTOR="$(( ( (LAST_END + ALIGN_SECTORS - 1) / ALIGN_SECTORS ) * ALIGN_SECTORS ))"
+  echo "[*] MBR last_end=${LAST_END} -> new_start=${START_SECTOR} (align=${ALIGN_SECTORS} sectors), new_size=${INSTALL_SECTORS} sectors"
+  printf 'start=%s,size=%s,type=c\n' "${START_SECTOR}" "${INSTALL_SECTORS}" | sfdisk --append "${NBD_DEV}" >/dev/null
+fi
+
 partprobe "${NBD_DEV}" || true
 sleep 1
+partprobe "${NBD_DEV}" || true
 
 LASTP="$(ls -1 "${NBD_DEV}"p* | sed -E 's/.*p([0-9]+)/\1/' | sort -n | tail -n1)"
 INSTALL_PART="${NBD_DEV}p${LASTP}"
