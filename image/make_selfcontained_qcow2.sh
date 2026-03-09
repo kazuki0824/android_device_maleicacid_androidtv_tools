@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# make_selfcontained_qcow2.v3.sh
+# make_selfcontained_qcow2.v4.sh
 #
-# Fixes vs older versions:
-# 1) OUT_DIR discovery works with OUT_DIR_COMMON_BASE separation (out-<product>) AND with nested
-#    layouts (some builds place outputs under OUT_DIR_COMMON_BASE/<topname>/target/product/...).
-# 2) Supports both GPT and MBR (dos) installer images:
-#    - GPT: use sgdisk to add INSTALL partition
-#    - MBR: use sfdisk to append a FAT32 partition at the end
+# v4 fix (requested):
+# - This script MUST be run from the Android repo root (directory that contains .repo/).
+#   We therefore determine TOP from the current working directory, not from the script path.
+#
+# Other behavior retained from v3:
+# - OUT_DIR discovery supports OUT_DIR_COMMON_BASE separation (out-<product>) and nested layouts.
+# - Supports both GPT and MBR (dos) installer images.
 #
 # Usage:
-#   sudo make_selfcontained_qcow2.v3.sh <product> [options]
-#
-# <product> may be:
-#   lineage_r86s_tv_virtio / lineage_qemu_tv_virtio  (recommended)
-#   r86s_tv_virtio / qemu_tv_virtio                  (will be normalized to lineage_<name>)
+#   sudo device/maleicacid/androidtv-tools/image/make_selfcontained_qcow2.v4.sh <product> [options]
 #
 # Options:
 #   --out-base <dir>    Base directory that contains (or contains */) target/product (default: auto)
@@ -56,11 +53,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-find_android_top() {
+find_android_top_from_pwd() {
   local d
-  d="$(cd "$(dirname "$0")" && pwd)"
+  d="$(pwd -P)"
   while [[ "${d}" != "/" ]]; do
-    if [[ -f "${d}/build/envsetup.sh" ]]; then
+    if [[ -d "${d}/.repo" ]]; then
       echo "${d}"
       return 0
     fi
@@ -69,10 +66,17 @@ find_android_top() {
   return 1
 }
 
-TOP="$(find_android_top)" || {
-  echo "[!] Could not find Android TOP (build/envsetup.sh)." >&2
+TOP="$(find_android_top_from_pwd)" || {
+  echo "[!] Could not find Android TOP (.repo directory) from current working directory." >&2
+  echo "    Run this script from the repo root (the directory that contains .repo/)." >&2
   exit 1
 }
+
+if [[ ! -f "${TOP}/build/envsetup.sh" ]]; then
+  echo "[!] Found .repo at: ${TOP} but build/envsetup.sh is missing." >&2
+  echo "    Ensure you are running from the Android source root." >&2
+  exit 1
+fi
 
 find_product_root() {
   local base="$1"
