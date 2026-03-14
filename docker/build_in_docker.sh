@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build helper for requirement 11/13:
-# - Source sync: outside container (repo sync already done)
-# - Build: inside openstf/docker-aosp container
+# Build helper for preinstalled qcow2 v14 flow.
 #
-# Usage (outside container, from ANDROID TOP):
-#   device/maleicacid/androidtv-tools/docker/build_in_docker.sh r86s_tv_virtio
-#   device/maleicacid/androidtv-tools/docker/build_in_docker.sh qemu_tv_virtio
+# This flow intentionally does NOT build espimage-install, otapackage, or systemimage.
+# Instead it builds the exact source ingredients needed to assemble a normal-boot
+# EFI System Partition and payload disk on the host side:
+#   - kernel
+#   - ramdisk.img
+#   - super.img
 #
-# Optional:
-#   NO_AB=1 ... build non-A/B images (smaller disk footprint)
+# Usage (outside container, from Android TOP / build-work):
+#   ../android_device_maleicacid_androidtv_tools/docker/build_in_docker.v6.sh lineage_qemu_tv_virtio
+#   ../android_device_maleicacid_androidtv_tools/docker/build_in_docker.v6.sh lineage_r86s_tv_virtio
 
 PRODUCT="${1:-}"
-RELEASE=ap2a
+RELEASE="ap2a"
 if [[ -z "${PRODUCT}" ]]; then
   echo "Usage: $0 <lineage_r86s_tv_virtio|lineage_qemu_tv_virtio>" >&2
   exit 1
 fi
 
-pushd $(dirname "$(realpath "${BASH_SOURCE:-0}")")
+SCRIPT_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE:-0}")")" && pwd)"
+pushd "$SCRIPT_DIR" >/dev/null
 sudo docker build -t aosp-build .
 popd
 
 mkdir -p ./ccache
-
 sudo docker run --rm -it \
   --mount "type=bind,src=$PWD/ccache,dst=/home/builder/.ccache" \
   -v "$(pwd):/workspace" \
@@ -39,28 +41,18 @@ sudo docker run --rm -it \
     fi
 
     source build/envsetup.sh
-
     echo ${PRODUCT}-${RELEASE}-userdebug
     lunch ${PRODUCT}-${RELEASE}-userdebug
 
     set -e
-
-    # microG workaround
     rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || \
       sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
 
-    m -j\$(nproc) superimage
+    # Build only the ingredients required by v14.
+    m -j\$(nproc) kernel ramdisk superimage
 
     PRODUCT_OUT=\"\$(get_build_var PRODUCT_OUT)\"
-    HOST_OUT_EXECUTABLES=\"\$(get_build_var HOST_OUT_EXECUTABLES)\"
-
-    \"\${HOST_OUT_EXECUTABLES}/avbtool\" make_vbmeta_image \
-      --flag 2 \
-      --padding_size 4096 \
-      --output \"\${PRODUCT_OUT}/vbmeta.img\"
-
-    BUILD_QEMU_IMAGES=true m -j\$(nproc) systemimage
-
     echo '[build] Done.'
     echo \"[build] PRODUCT_OUT: \${PRODUCT_OUT}\"
+    echo \"[build] Expected artifacts: \${PRODUCT_OUT}/kernel \${PRODUCT_OUT}/ramdisk.img \${PRODUCT_OUT}/super.img\"
   "
