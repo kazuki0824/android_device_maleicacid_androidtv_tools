@@ -54,12 +54,50 @@ find_top() {
 }
 
 TOP="$(find_top)" || { echo "[!] Could not locate Android repo root (.repo)." >&2; exit 1; }
+
+# Discover PRODUCT_OUT from actual build artifacts rather than get_build_var PRODUCT_OUT,
+# because the build was done inside Docker with OUT_DIR_COMMON_BASE=/workspace/out-<product>,
+# which does not map 1:1 to the host path used here.
+discover_product_out() {
+  local base
+  for base in     "$TOP/out-${PRODUCT}/workspace/target/product"     "$TOP/out-${PRODUCT}/target/product"     "$TOP/out-${PRODUCT#lineage_}/workspace/target/product"     "$TOP/out-${PRODUCT#lineage_}/target/product"     "$TOP/out/target/product"
+  do
+    [[ -d "$base" ]] || continue
+    local cand
+    for cand in "$base"/*; do
+      [[ -d "$cand" ]] || continue
+      if [[ -f "$cand/kernel" && -f "$cand/ramdisk.img" && -f "$cand/super.img" ]]; then
+        echo "$cand"
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+PRODUCT_OUT="$(discover_product_out)" || {
+  echo "[!] Could not locate PRODUCT_OUT from built artifacts." >&2
+  echo "    Expected a directory containing kernel, ramdisk.img, and super.img under:" >&2
+  echo "      $TOP/out-${PRODUCT}/workspace/target/product/*" >&2
+  echo "      $TOP/out-${PRODUCT}/target/product/*" >&2
+  echo "      $TOP/out-${PRODUCT#lineage_}/workspace/target/product/*" >&2
+  echo "      $TOP/out-${PRODUCT#lineage_}/target/product/*" >&2
+  echo "      $TOP/out/target/product/*" >&2
+  exit 1
+}
+
+# build/envsetup.sh is not nounset-safe. Use it only for config variables, not PRODUCT_OUT.
+set +u
 source "$TOP/build/envsetup.sh" >/dev/null
 lunch "${PRODUCT}-${RELEASE}-${VARIANT}" >/dev/null
-
-PRODUCT_OUT="$(get_build_var PRODUCT_OUT)"
-HOST_OUT_EXECUTABLES="$(get_build_var HOST_OUT_EXECUTABLES)"
 BOARD_KERNEL_CMDLINE="$(get_build_var BOARD_KERNEL_CMDLINE)"
+set -u
+
+HOST_OUT_EXECUTABLES="${PRODUCT_OUT%/target/product/*}/host/linux-x86/bin"
+if [[ ! -d "$HOST_OUT_EXECUTABLES" ]]; then
+  echo "[!] host tools dir not found: $HOST_OUT_EXECUTABLES" >&2
+  exit 1
+fi
 
 KERNEL="$PRODUCT_OUT/kernel"
 RAMDISK="$PRODUCT_OUT/ramdisk.img"
@@ -75,6 +113,9 @@ GRUB_MKSTANDALONE="$TOP/prebuilts/bootmgr/grub/linux-x86/x86_64-efi/bin/grub-mks
 GRUB_EFI_LIB="$TOP/prebuilts/bootmgr/grub/linux-x86/x86_64-efi/lib/grub/x86_64-efi"
 GRUB_MKIMAGE="$TOP/prebuilts/bootmgr/grub/linux-x86/i386-pc/bin/grub-mkimage"
 GRUB_BIOS_LIB="$TOP/prebuilts/bootmgr/grub/linux-x86/i386-pc/lib/grub/i386-pc"
+
+echo "[*] PRODUCT_OUT: $PRODUCT_OUT"
+echo "[*] HOST_OUT_EXECUTABLES: $HOST_OUT_EXECUTABLES"
 
 for f in "$KERNEL" "$RAMDISK" "$SUPER_IMG" "$AVBTOOL" "$GRUB_MKSTANDALONE" "$GRUB_EFI_LIB"; do
   [[ -e "$f" ]] || { echo "[!] Required input not found: $f" >&2; exit 1; }
