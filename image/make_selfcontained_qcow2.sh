@@ -53,12 +53,14 @@ if [[ -z "$TOP" ]]; then
 fi
 
 # Normalize product name
-PRODUCT="${PRODUCT_RAW}"
+SHORT_PRODUCT="${PRODUCT_RAW#lineage_}"
+PRODUCT="lineage_${SHORT_PRODUCT}"
 
-# Locate PRODUCT_OUT.  Try out-lineage_${product}/workspace/target/product/* first,
-# then fallback to out/target/product.
+# Locate PRODUCT_OUT.  In this environment the build output is typically under
+#   $TOP/out-${PRODUCT}/workspace/target/product/<device>
+# but we also check a few fallbacks.
 PRODUCT_OUT=""
-for base in "$TOP/out-lineage_${PRODUCT}" "$TOP/out"; do
+for base in "$TOP/out-${PRODUCT}" "$TOP/out-${SHORT_PRODUCT}" "$TOP/out"; do
   for sub in "workspace/target/product" "target/product"; do
     dir="$base/$sub"
     if [[ -d "$dir" ]]; then
@@ -74,7 +76,10 @@ for base in "$TOP/out-lineage_${PRODUCT}" "$TOP/out"; do
 done
 
 if [[ -z "$PRODUCT_OUT" ]]; then
-  echo "[!] Could not locate PRODUCT_OUT with system-qemu.img. Ensure you ran \"m superimage\" and \"m systemimage\"." >&2
+  echo "[!] Could not locate PRODUCT_OUT with system-qemu.img." >&2
+  echo "    Looked under: $TOP/out-${PRODUCT} and $TOP/out" >&2
+  echo "    Ensure you ran: m superimage && m systemimage" >&2
+  echo "    Also ensure BUILD_QEMU_IMAGES := true is active for the product." >&2
   exit 1
 fi
 
