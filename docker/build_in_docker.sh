@@ -44,16 +44,8 @@ sudo docker run --rm -it \
     # microG workaround
     rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
     # Installer image: espimage-install (.img).
-    m -j\$(nproc) espimage-install
-
-    # Flashable zip to apply in recovery.
-    # If otapackage is missing, bacon usually produces the flashable zip.
-    if m -j\$(nproc) otapackage; then
-      echo '[build] Built otapackage'
-    else
-      echo '[build] otapackage not available; falling back to bacon'
-      m -j\$(nproc) bacon
-    fi
+    m -j\$(nproc) superimage
+    m -j\$(nproc) systemimage
 
     echo '[build] Done.'
     echo \"[build] Outputs under: \${OUT_DIR_COMMON_BASE}/target/product/*\"
