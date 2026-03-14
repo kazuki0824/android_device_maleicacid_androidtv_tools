@@ -22,7 +22,9 @@ fi
 pushd $(dirname "$(realpath "${BASH_SOURCE:-0}")")
 sudo docker build -t aosp-build .
 popd
+
 mkdir -p ./ccache
+
 sudo docker run --rm -it \
   --mount "type=bind,src=$PWD/ccache,dst=/home/builder/.ccache" \
   -v "$(pwd):/workspace" \
@@ -30,23 +32,35 @@ sudo docker run --rm -it \
   aosp-build \
   bash -lc "
     export OUT_DIR_COMMON_BASE=\${OUT_DIR_COMMON_BASE:-/workspace/out-${PRODUCT}}
+
     if [[ \"\${NO_AB:-0}\" == 1 ]]; then
       export AB_OTA_UPDATER=false
       echo '[build] AB_OTA_UPDATER=false (non-A/B)'
     fi
 
     source build/envsetup.sh
-    
+
     echo ${PRODUCT}-${RELEASE}-userdebug
     lunch ${PRODUCT}-${RELEASE}-userdebug
 
     set -e
+
     # microG workaround
-    rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
-    # Installer image: espimage-install (.img).
+    rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || \
+      sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
+
     m -j\$(nproc) superimage
-    m -j\$(nproc) systemimage
+
+    PRODUCT_OUT=\"\$(get_build_var PRODUCT_OUT)\"
+    HOST_OUT_EXECUTABLES=\"\$(get_build_var HOST_OUT_EXECUTABLES)\"
+
+    \"\${HOST_OUT_EXECUTABLES}/avbtool\" make_vbmeta_image \
+      --flag 2 \
+      --padding_size 4096 \
+      --output \"\${PRODUCT_OUT}/vbmeta.img\"
+
+    BUILD_QEMU_IMAGES=true m -j\$(nproc) systemimage
 
     echo '[build] Done.'
-    echo \"[build] Outputs under: \${OUT_DIR_COMMON_BASE}/target/product/*\"
+    echo \"[build] PRODUCT_OUT: \${PRODUCT_OUT}\"
   "
