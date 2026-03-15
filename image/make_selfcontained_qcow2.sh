@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a preinstalled Android TV qcow2 for virtio x86_64 by generating a normal-boot
-# EFI System Partition from source ingredients (kernel, ramdisk, GRUB prebuilts) and
-# combining it with super/vbmeta/persist/misc/metadata partitions.
+# Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
-# Run from the Android repo root (directory containing .repo/), e.g. build-work.
+# v16.2 design:
+#   - Uses AOSP platform/external/u-boot (main) as the bootloader source.
+#   - Uses stock Android images as raw partition payloads:
+#       boot.img, vendor_boot.img, super.img, optional vbmeta.img.
+#   - Does NOT unpack vendor_boot.img.
+#   - Places a U-Boot EFI application into the ESP as BOOTX64.EFI.
+#   - Expects runtime boot to use stock U-Boot boot_android / android_bootloader.
+#
+# Run from Android build root (./.repo must exist).
 #
 # Usage:
-#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v14.sh lineage_qemu_tv_virtio
+#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.2.sh lineage_qemu_tv_virtio
 #
-# Optional flags:
-#   --release ap2a
-#   --variant userdebug
+# Optional:
 #   --system-size 16         # GiB, default 16
 #   --userdata-size 16       # GiB, default 16
-#   --esp-size-mib 512       # MiB, default 512
-#   --with-bios              # also install BIOS GRUB bootstrap (optional)
-#   --sysdev vda             # disk name used inside GRUB partition_map, default vda
+#   --esp-size-mib 128       # MiB, default 128
+#   --release ap2a
+#   --variant userdebug
+#   --uboot-src-dir /path/to/cache/u-boot-aosp-main
+#   --uboot-build-dir /path/to/build
+#   --uenv /path/to/uEnv.txt
+#   --boot-script /path/to/boot.scr.uimg
 
 PRODUCT="${1:-}"
 shift || true
@@ -27,46 +35,57 @@ RELEASE="ap2a"
 VARIANT="userdebug"
 SYSTEM_SIZE_GIB=16
 USERDATA_SIZE_GIB=16
-ESP_SIZE_MIB=512
-WITH_BIOS=0
-SYSDEV="vda"
+ESP_SIZE_MIB=128
+UENV_FILE=""
+BOOT_SCRIPT=""
+UBOOT_SRC_DIR=""
+UBOOT_BUILD_DIR=""
+UBOOT_REF="main"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --release) RELEASE="$2"; shift 2;;
-    --variant) VARIANT="$2"; shift 2;;
-    --system-size) SYSTEM_SIZE_GIB="$2"; shift 2;;
-    --userdata-size) USERDATA_SIZE_GIB="$2"; shift 2;;
-    --esp-size-mib) ESP_SIZE_MIB="$2"; shift 2;;
-    --with-bios) WITH_BIOS=1; shift 1;;
-    --sysdev) SYSDEV="$2"; shift 2;;
-    *) echo "Unknown argument: $1" >&2; exit 1;;
+    --release) RELEASE="$2"; shift 2 ;;
+    --variant) VARIANT="$2"; shift 2 ;;
+    --system-size) SYSTEM_SIZE_GIB="$2"; shift 2 ;;
+    --userdata-size) USERDATA_SIZE_GIB="$2"; shift 2 ;;
+    --esp-size-mib) ESP_SIZE_MIB="$2"; shift 2 ;;
+    --uenv) UENV_FILE="$2"; shift 2 ;;
+    --boot-script) BOOT_SCRIPT="$2"; shift 2 ;;
+    --uboot-src-dir) UBOOT_SRC_DIR="$2"; shift 2 ;;
+    --uboot-build-dir) UBOOT_BUILD_DIR="$2"; shift 2 ;;
+    --uboot-ref) UBOOT_REF="$2"; shift 2 ;;
+    *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
-find_top() {
-  local d="$(pwd -P)"
-  while [[ "$d" != "/" ]]; do
-    [[ -d "$d/.repo" ]] && { echo "$d"; return 0; }
-    d="$(dirname "$d")"
-  done
-  return 1
-}
+[[ -d ./.repo ]] || { echo "[!] Run this script from the Android build root (./.repo must exist)." >&2; exit 1; }
+[[ -z "$UENV_FILE" || -f "$UENV_FILE" ]] || { echo "[!] uEnv file not found: $UENV_FILE" >&2; exit 1; }
+[[ -z "$BOOT_SCRIPT" || -f "$BOOT_SCRIPT" ]] || { echo "[!] boot script not found: $BOOT_SCRIPT" >&2; exit 1; }
 
-TOP="$(find_top)" || { echo "[!] Could not locate Android repo root (.repo)." >&2; exit 1; }
+TOP="$(pwd -P)"
 
-# Discover PRODUCT_OUT from actual build artifacts rather than get_build_var PRODUCT_OUT,
-# because the build was done inside Docker with OUT_DIR_COMMON_BASE=/workspace/out-<product>,
-# which does not map 1:1 to the host path used here.
+SHORT_PRODUCT="$PRODUCT"
+[[ "$SHORT_PRODUCT" == lineage_* ]] && SHORT_PRODUCT="${SHORT_PRODUCT#lineage_}"
+
+# envsetup.sh is not nounset-safe.
+set +u
+source "$TOP/build/envsetup.sh" >/dev/null
+lunch "${PRODUCT}-${RELEASE}-${VARIANT}" >/dev/null
+set -u
+
+# Discover PRODUCT_OUT from actual files rather than trusting envsetup's default out-dir.
 discover_product_out() {
-  local base
-  for base in     "$TOP/out-${PRODUCT}/workspace/target/product"     "$TOP/out-${PRODUCT}/target/product"     "$TOP/out-${PRODUCT#lineage_}/workspace/target/product"     "$TOP/out-${PRODUCT#lineage_}/target/product"     "$TOP/out/target/product"
-  do
+  local base cand
+  for base in \
+    "$TOP/out-${PRODUCT}/workspace/target/product" \
+    "$TOP/out-${PRODUCT}/target/product" \
+    "$TOP/out-${SHORT_PRODUCT}/workspace/target/product" \
+    "$TOP/out-${SHORT_PRODUCT}/target/product" \
+    "$TOP/out/target/product"; do
     [[ -d "$base" ]] || continue
-    local cand
     for cand in "$base"/*; do
       [[ -d "$cand" ]] || continue
-      if [[ -f "$cand/kernel" && -f "$cand/ramdisk.img" && -f "$cand/super.img" ]]; then
+      if [[ -f "$cand/boot.img" && -f "$cand/vendor_boot.img" && -f "$cand/super.img" ]]; then
         echo "$cand"
         return 0
       fi
@@ -77,80 +96,138 @@ discover_product_out() {
 
 PRODUCT_OUT="$(discover_product_out)" || {
   echo "[!] Could not locate PRODUCT_OUT from built artifacts." >&2
-  echo "    Expected a directory containing kernel, ramdisk.img, and super.img under:" >&2
-  echo "      $TOP/out-${PRODUCT}/workspace/target/product/*" >&2
-  echo "      $TOP/out-${PRODUCT}/target/product/*" >&2
-  echo "      $TOP/out-${PRODUCT#lineage_}/workspace/target/product/*" >&2
-  echo "      $TOP/out-${PRODUCT#lineage_}/target/product/*" >&2
-  echo "      $TOP/out/target/product/*" >&2
   exit 1
 }
+HOST_ROOT="${PRODUCT_OUT%/target/product/*}"
+HOST_OUT_EXECUTABLES="$HOST_ROOT/host/linux-x86/bin"
 
-# build/envsetup.sh is not nounset-safe. Use it only for config variables, not PRODUCT_OUT.
-set +u
-source "$TOP/build/envsetup.sh" >/dev/null
-lunch "${PRODUCT}-${RELEASE}-${VARIANT}" >/dev/null
-BOARD_KERNEL_CMDLINE="$(get_build_var BOARD_KERNEL_CMDLINE)"
-set -u
-
-HOST_OUT_EXECUTABLES="${PRODUCT_OUT%/target/product/*}/host/linux-x86/bin"
-if [[ ! -d "$HOST_OUT_EXECUTABLES" ]]; then
-  echo "[!] host tools dir not found: $HOST_OUT_EXECUTABLES" >&2
-  exit 1
-fi
-
-KERNEL="$PRODUCT_OUT/kernel"
-RAMDISK="$PRODUCT_OUT/ramdisk.img"
+BOOT_IMG="$PRODUCT_OUT/boot.img"
+VENDOR_BOOT_IMG="$PRODUCT_OUT/vendor_boot.img"
 SUPER_IMG="$PRODUCT_OUT/super.img"
 PERSIST_IMG="$PRODUCT_OUT/persist.img"
 VBMETA_IMG="$PRODUCT_OUT/vbmeta.img"
 AVBTOOL="$HOST_OUT_EXECUTABLES/avbtool"
 SIMG2IMG="$HOST_OUT_EXECUTABLES/simg2img"
-GRUB_PATCH_BIN="$HOST_OUT_EXECUTABLES/grub_i386-pc_img_patch"
-GRUB_PATCH_SRC="$TOP/device/virt/virt-common/utilities/grub_i386-pc_img_patch/grub_i386-pc_img_patch.c"
-PREBUILT_GRUB_TOOLS="$TOP/prebuilts/bootmgr/tools/linux-x86/bin"
-GRUB_MKSTANDALONE="$TOP/prebuilts/bootmgr/grub/linux-x86/x86_64-efi/bin/grub-mkstandalone"
-GRUB_EFI_LIB="$TOP/prebuilts/bootmgr/grub/linux-x86/x86_64-efi/lib/grub/x86_64-efi"
-GRUB_MKIMAGE="$TOP/prebuilts/bootmgr/grub/linux-x86/i386-pc/bin/grub-mkimage"
-GRUB_BIOS_LIB="$TOP/prebuilts/bootmgr/grub/linux-x86/i386-pc/lib/grub/i386-pc"
+SGDISK_BIN="$HOST_OUT_EXECUTABLES/sgdisk"
 
-echo "[*] PRODUCT_OUT: $PRODUCT_OUT"
-echo "[*] HOST_OUT_EXECUTABLES: $HOST_OUT_EXECUTABLES"
-
-for f in "$KERNEL" "$RAMDISK" "$SUPER_IMG" "$AVBTOOL" "$GRUB_MKSTANDALONE" "$GRUB_EFI_LIB"; do
+for f in "$BOOT_IMG" "$VENDOR_BOOT_IMG" "$SUPER_IMG" "$AVBTOOL" "$SIMG2IMG" "$SGDISK_BIN"; do
   [[ -e "$f" ]] || { echo "[!] Required input not found: $f" >&2; exit 1; }
 done
 
-TMPDIR="$(mktemp -d)"
-ESP_MOUNT="$TMPDIR/esp"
-mkdir -p "$ESP_MOUNT"
-trap 'set +e; umount "$ESP_MOUNT" >/dev/null 2>&1 || true; [[ -n "${NBD_DEV:-}" ]] && qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true; rm -rf "$TMPDIR"' EXIT
+OUTPUT_DIR="$PRODUCT_OUT/preinstalled"
+mkdir -p "$OUTPUT_DIR"
 
-# If vbmeta.img does not exist, make a disabled one.
+if [[ -z "$UBOOT_SRC_DIR" ]]; then
+  UBOOT_SRC_DIR="$OUTPUT_DIR/u-boot-aosp-${UBOOT_REF}"
+fi
+if [[ -z "$UBOOT_BUILD_DIR" ]]; then
+  UBOOT_BUILD_DIR="$OUTPUT_DIR/u-boot-build-${UBOOT_REF}"
+fi
+
+clone_or_refresh_aosp_uboot() {
+  command -v git >/dev/null 2>&1 || { echo "[!] git is required to retrieve AOSP external/u-boot." >&2; exit 1; }
+  if [[ ! -d "$UBOOT_SRC_DIR/.git" ]]; then
+    rm -rf "$UBOOT_SRC_DIR"
+    echo "[*] Cloning AOSP external/u-boot ($UBOOT_REF)..."
+    git clone --depth 1 --branch "$UBOOT_REF" https://android.googlesource.com/platform/external/u-boot "$UBOOT_SRC_DIR"
+  else
+    echo "[*] Reusing existing AOSP external/u-boot source tree: $UBOOT_SRC_DIR"
+  fi
+}
+
+build_uboot_efi_app() {
+  command -v make >/dev/null 2>&1 || { echo "[!] make is required to build U-Boot." >&2; exit 1; }
+  command -v gcc >/dev/null 2>&1 || { echo "[!] gcc is required to build U-Boot EFI app." >&2; exit 1; }
+
+  mkdir -p "$UBOOT_BUILD_DIR"
+  echo "[*] Building AOSP external/u-boot as x86_64 EFI application..."
+  make -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" efi-x86_app64_defconfig >/dev/null
+
+  # Best-effort config enrichment for virtio + Android boot flow.
+  if [[ -x "$UBOOT_SRC_DIR/scripts/config" ]]; then
+    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
+      -e CMD_BOOT_ANDROID \
+      -e VIRTIO \
+      -e VIRTIO_BLK \
+      -e CMD_VIRTIO \
+      -e PARTITIONS \
+      -e EFI_PARTITION \
+      -e DOS_PARTITION \
+      -e PARTITION_UUIDS \
+      -e CMD_GPT \
+      -e CMD_PART \
+      -e CMD_FS_GENERIC \
+      -e CMD_FAT \
+      -e CMD_EXT4 \
+      -e EFI_LOADER || true
+
+    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
+      --set-val BOOTDELAY 0 || true
+    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
+      --set-str BOOTCOMMAND 'virtio scan; boot_android virtio 0;misc a' || true
+
+    make -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" olddefconfig >/dev/null
+  fi
+
+  make -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" -j"$(nproc)" >/dev/null
+}
+
+find_uboot_efi_binary() {
+  local cand
+  for cand in \
+    "$UBOOT_BUILD_DIR/u-boot-app.efi" \
+    "$UBOOT_BUILD_DIR/u-boot.efi" \
+    "$UBOOT_BUILD_DIR/u-boot-payload.efi"; do
+    [[ -f "$cand" ]] && { echo "$cand"; return 0; }
+  done
+  return 1
+}
+
+clone_or_refresh_aosp_uboot
+build_uboot_efi_app
+UBOOT_EFI="$(find_uboot_efi_binary)" || {
+  echo "[!] Built U-Boot EFI binary not found under $UBOOT_BUILD_DIR" >&2
+  exit 1
+}
+
+# Generate disabled vbmeta if missing.
 if [[ ! -f "$VBMETA_IMG" ]]; then
   echo "[*] Creating disabled vbmeta.img at $VBMETA_IMG"
   "$AVBTOOL" make_vbmeta_image --flag 2 --padding_size 4096 --output "$VBMETA_IMG"
 fi
 
-# Convert sparse super image to raw if needed.
-SUPER_RAW="$TMPDIR/super.raw"
-python3 - "$SUPER_IMG" "$SUPER_RAW" "$SIMG2IMG" <<'PY'
-import struct, sys, shutil, subprocess, os
-src, dst, simg2img = sys.argv[1:4]
-with open(src, 'rb') as f:
-    magic = struct.unpack('<I', f.read(4))[0]
-# Android sparse magic
-if magic == 0xed26ff3a:
-    subprocess.check_call([simg2img, src, dst])
-else:
-    shutil.copyfile(src, dst)
-PY
+TMPDIR="$(mktemp -d)"
+ESP_MOUNT="$TMPDIR/esp"
+mkdir -p "$ESP_MOUNT"
+NBD_DEV=""
+cleanup() {
+  set +e
+  sync
+  umount "$ESP_MOUNT" >/dev/null 2>&1 || true
+  [[ -n "$NBD_DEV" ]] && qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
+  rm -rf "$TMPDIR"
+}
+trap cleanup EXIT
 
 ceil_mib() {
   local bytes="$1"
   echo $(( (bytes + 1024*1024 - 1) / (1024*1024) ))
 }
 
+SUPER_RAW="$TMPDIR/super.raw"
+python3 - "$SUPER_IMG" "$SUPER_RAW" "$SIMG2IMG" <<'PY'
+import struct, sys, shutil, subprocess
+src, dst, simg2img = sys.argv[1:4]
+with open(src, 'rb') as f:
+    magic = struct.unpack('<I', f.read(4))[0]
+if magic == 0xed26ff3a:
+    subprocess.check_call([simg2img, src, dst])
+else:
+    shutil.copyfile(src, dst)
+PY
+
+BOOT_MIB="$(ceil_mib "$(stat -c '%s' "$BOOT_IMG")")"
+VENDOR_BOOT_MIB="$(ceil_mib "$(stat -c '%s' "$VENDOR_BOOT_IMG")")"
 SUPER_MIB="$(ceil_mib "$(stat -c '%s' "$SUPER_RAW")")"
 VBMETA_MIB="$(ceil_mib "$(stat -c '%s' "$VBMETA_IMG")")"
 PERSIST_MIB=32
@@ -159,149 +236,78 @@ if [[ -f "$PERSIST_IMG" ]]; then
 fi
 MISC_MIB=16
 METADATA_MIB=64
-BIOS_MIB=1
 
-OUTPUT_DIR="$PRODUCT_OUT/preinstalled"
-mkdir -p "$OUTPUT_DIR"
 SYSTEM_RAW="$OUTPUT_DIR/androidtv-${PRODUCT}.raw"
 SYSTEM_QCOW="$OUTPUT_DIR/androidtv-${PRODUCT}.qcow2"
 USERDATA_QCOW="$OUTPUT_DIR/androidtv-${PRODUCT}-userdata.qcow2"
 
-# Prepare raw disk and partition it.
 rm -f "$SYSTEM_RAW" "$SYSTEM_QCOW" "$USERDATA_QCOW"
 qemu-img create -f raw "$SYSTEM_RAW" "${SYSTEM_SIZE_GIB}G" >/dev/null
 modprobe nbd max_part=32 >/dev/null 2>&1 || true
 NBD_DEV=/dev/nbd0
 qemu-nbd --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
-qemu-nbd --connect "$NBD_DEV" "$SYSTEM_RAW"
+qemu-nbd --format=raw --connect "$NBD_DEV" "$SYSTEM_RAW"
 partprobe "$NBD_DEV" || true
 sleep 1
-sgdisk -og "$NBD_DEV"
+"$SGDISK_BIN" --clear "$NBD_DEV"
+"$SGDISK_BIN" --new=1:0:+${ESP_SIZE_MIB}M      --typecode=1:ef00 --change-name=1:EFI           "$NBD_DEV"
+"$SGDISK_BIN" --new=2:0:+${MISC_MIB}M          --typecode=2:8300 --change-name=2:misc          "$NBD_DEV"
+"$SGDISK_BIN" --new=3:0:+${BOOT_MIB}M          --typecode=3:8300 --change-name=3:boot_a        "$NBD_DEV"
+"$SGDISK_BIN" --new=4:0:+${VENDOR_BOOT_MIB}M   --typecode=4:8300 --change-name=4:vendor_boot_a "$NBD_DEV"
+"$SGDISK_BIN" --new=5:0:+${VBMETA_MIB}M        --typecode=5:8300 --change-name=5:vbmeta_a      "$NBD_DEV"
+"$SGDISK_BIN" --new=6:0:+${SUPER_MIB}M         --typecode=6:8300 --change-name=6:super         "$NBD_DEV"
+"$SGDISK_BIN" --new=7:0:+${PERSIST_MIB}M       --typecode=7:8300 --change-name=7:persist       "$NBD_DEV"
+"$SGDISK_BIN" --new=8:0:+${METADATA_MIB}M      --typecode=8:8300 --change-name=8:metadata      "$NBD_DEV"
+partprobe "$NBD_DEV" || true
+sleep 1
 
-if [[ "$WITH_BIOS" -eq 1 ]]; then
-  sgdisk -n "1:0:+${ESP_SIZE_MIB}M" -t "1:ef00" -c "1:EFI" "$NBD_DEV"
-  sgdisk -n "2:0:+${BIOS_MIB}M"     -t "2:ef02" -c "2:BIOS" "$NBD_DEV"
-  sgdisk -n "3:0:+${SUPER_MIB}M"    -t "3:8300" -c "3:super" "$NBD_DEV"
-  sgdisk -n "4:0:+${VBMETA_MIB}M"   -t "4:8300" -c "4:vbmeta" "$NBD_DEV"
-  sgdisk -n "5:0:+${PERSIST_MIB}M"  -t "5:8300" -c "5:persist" "$NBD_DEV"
-  sgdisk -n "6:0:+${MISC_MIB}M"     -t "6:8300" -c "6:misc" "$NBD_DEV"
-  sgdisk -n "7:0:+${METADATA_MIB}M" -t "7:8300" -c "7:metadata" "$NBD_DEV"
-  EFI_PART=1; BIOS_PART=2; SUPER_PART=3; VBMETA_PART=4; PERSIST_PART=5; MISC_PART=6; METADATA_PART=7
+mkfs.vfat -F 32 -n EFI "${NBD_DEV}p1" >/dev/null
+mount "${NBD_DEV}p1" "$ESP_MOUNT"
+mkdir -p "$ESP_MOUNT/EFI/BOOT"
+cp "$UBOOT_EFI" "$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI"
+
+if [[ -n "$UENV_FILE" ]]; then
+  cp "$UENV_FILE" "$ESP_MOUNT/uEnv.txt"
 else
-  sgdisk -n "1:0:+${ESP_SIZE_MIB}M" -t "1:ef00" -c "1:EFI" "$NBD_DEV"
-  sgdisk -n "2:0:+${SUPER_MIB}M"    -t "2:8300" -c "2:super" "$NBD_DEV"
-  sgdisk -n "3:0:+${VBMETA_MIB}M"   -t "3:8300" -c "3:vbmeta" "$NBD_DEV"
-  sgdisk -n "4:0:+${PERSIST_MIB}M"  -t "4:8300" -c "4:persist" "$NBD_DEV"
-  sgdisk -n "5:0:+${MISC_MIB}M"     -t "5:8300" -c "5:misc" "$NBD_DEV"
-  sgdisk -n "6:0:+${METADATA_MIB}M" -t "6:8300" -c "6:metadata" "$NBD_DEV"
-  EFI_PART=1; BIOS_PART=0; SUPER_PART=2; VBMETA_PART=3; PERSIST_PART=4; MISC_PART=5; METADATA_PART=6
-fi
-partprobe "$NBD_DEV" || true
-sleep 1
-
-# Build normal-boot GRUB config.
-PMAP="${SYSDEV}${SUPER_PART},super;${SYSDEV}${VBMETA_PART},vbmeta;${SYSDEV}${PERSIST_PART},persist;${SYSDEV}${MISC_PART},misc;${SYSDEV}${METADATA_PART},metadata"
-PMAP_ESCAPED="${PMAP//;/\\;}"
-CMDLINE="$BOARD_KERNEL_CMDLINE"
-CMDLINE="$(echo "$CMDLINE" | sed -E 's#(^| )androidboot\.partition_map=[^ ]*##g' | xargs)"
-CMDLINE="$CMDLINE androidboot.partition_map=${PMAP_ESCAPED}"
-
-cat > "$TMPDIR/grub.cfg" <<EOF2
-insmod normal
-insmod linux
-insmod test
-
-if [ "\$grub_platform" = "efi" ]; then
-    insmod efi_gop
-elif [ "\$grub_platform" = "pc" ]; then
-    insmod vbe
+  cat > "$ESP_MOUNT/uEnv.txt" <<'ENV'
+bootdelay=0
+bootcmd=virtio scan; boot_android virtio 0;misc a
+ENV
 fi
 
-menuentry "Android" {
-    set gfxpayload=keep
-    linux /android/kernel $CMDLINE
-    initrd /android/ramdisk.img
-}
-EOF2
-
-cat > "$TMPDIR/grub-standalone.cfg" <<'EOF2'
-search --file --no-floppy --set=root /android/kernel
-set prefix=($root)'/boot/grub'
-configfile $prefix/grub.cfg
-EOF2
-
-# Prepare EFI partition filesystem.
-mkfs.vfat -F 32 -n EFI "${NBD_DEV}p${EFI_PART}" >/dev/null
-mount "${NBD_DEV}p${EFI_PART}" "$ESP_MOUNT"
-mkdir -p "$ESP_MOUNT/android" "$ESP_MOUNT/boot/grub" "$ESP_MOUNT/EFI/BOOT"
-cp "$KERNEL" "$ESP_MOUNT/android/kernel"
-cp "$RAMDISK" "$ESP_MOUNT/android/ramdisk.img"
-cp "$TMPDIR/grub.cfg" "$ESP_MOUNT/boot/grub/grub.cfg"
-cp -a "$GRUB_BIOS_LIB" "$ESP_MOUNT/boot/grub/i386-pc"
-cp -a "$GRUB_EFI_LIB" "$ESP_MOUNT/boot/grub/x86_64-efi"
-PATH="$PREBUILT_GRUB_TOOLS:$PATH" \
-  "$GRUB_MKSTANDALONE" \
-    -d "$GRUB_EFI_LIB" \
-    --fonts="" \
-    --format=x86_64-efi \
-    --locales="" \
-    --modules="configfile disk fat part_gpt search" \
-    --output="$TMPDIR/BOOTX64.EFI" \
-    "boot/grub/grub.cfg=$TMPDIR/grub-standalone.cfg"
-cp "$TMPDIR/BOOTX64.EFI" "$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI"
+if [[ -n "$BOOT_SCRIPT" ]]; then
+  cp "$BOOT_SCRIPT" "$ESP_MOUNT/boot.scr.uimg"
+fi
 sync
 umount "$ESP_MOUNT"
 
-# Install payload partitions.
-dd if="$SUPER_RAW" of="${NBD_DEV}p${SUPER_PART}" bs=4M conv=fsync,notrunc status=none
-# vbmeta.img is tiny; write directly.
-dd if="$VBMETA_IMG" of="${NBD_DEV}p${VBMETA_PART}" bs=1M conv=fsync,notrunc status=none
+# Write Android payload partitions.
+dd if=/dev/zero of="${NBD_DEV}p2" bs=1M count=$MISC_MIB conv=fsync,notrunc status=none
 if [[ -f "$PERSIST_IMG" ]]; then
-  dd if="$PERSIST_IMG" of="${NBD_DEV}p${PERSIST_PART}" bs=1M conv=fsync,notrunc status=none
+  dd if="$PERSIST_IMG" of="${NBD_DEV}p7" bs=4M conv=fsync,notrunc status=progress
 else
-  mkfs.ext4 -F -L persist "${NBD_DEV}p${PERSIST_PART}" >/dev/null 2>&1 || true
+  mkfs.ext4 -F -L persist "${NBD_DEV}p7" >/dev/null 2>&1 || true
 fi
-mkfs.ext4 -F -L metadata "${NBD_DEV}p${METADATA_PART}" >/dev/null 2>&1 || true
+mkfs.ext4 -F -L metadata "${NBD_DEV}p8" >/dev/null 2>&1 || true
 
-# Optional BIOS support.
-if [[ "$WITH_BIOS" -eq 1 ]]; then
-  if [[ ! -x "$GRUB_PATCH_BIN" ]]; then
-    if [[ -f "$GRUB_PATCH_SRC" ]]; then
-      gcc "$GRUB_PATCH_SRC" -o "$GRUB_PATCH_BIN"
-    else
-      echo "[!] BIOS support requested but grub_i386-pc_img_patch not available." >&2
-      exit 1
-    fi
-  fi
-  cp "$GRUB_BIOS_LIB/boot.img" "$TMPDIR/boot.img.full"
-  # Only MBR boot code (446 bytes) is written to the disk later.
-  PATH="$PREBUILT_GRUB_TOOLS:$PATH" \
-    "$GRUB_MKIMAGE" \
-      --compression=auto \
-      --config="$TMPDIR/grub-standalone.cfg" \
-      --directory="$GRUB_BIOS_LIB" \
-      --format=i386-pc \
-      --output="$TMPDIR/core.img" \
-      --prefix=/boot/grub \
-      fat part_gpt biosdisk search configfile
-  START_SECTOR="$(sgdisk -i "$BIOS_PART" "$NBD_DEV" | awk -F': ' '/First sector/ {print $2}')"
-  "$GRUB_PATCH_BIN" "$START_SECTOR" "$TMPDIR/boot.img.full" "$TMPDIR/core.img"
-  dd if="$TMPDIR/boot.img.full" of="$NBD_DEV" bs=446 count=1 conv=fsync,notrunc status=none
-  dd if="$TMPDIR/core.img" of="$NBD_DEV" bs=512 seek="$START_SECTOR" conv=fsync,notrunc status=none
-fi
+dd if="$BOOT_IMG"        of="${NBD_DEV}p3" bs=4M conv=fsync,notrunc status=progress
+dd if="$VENDOR_BOOT_IMG" of="${NBD_DEV}p4" bs=4M conv=fsync,notrunc status=progress
+dd if="$VBMETA_IMG"      of="${NBD_DEV}p5" bs=4M conv=fsync,notrunc status=progress
+dd if="$SUPER_RAW"       of="${NBD_DEV}p6" bs=4M conv=fsync,notrunc status=progress
 
+sync
 qemu-nbd --disconnect "$NBD_DEV"
 NBD_DEV=""
 
 qemu-img convert -f raw -O qcow2 "$SYSTEM_RAW" "$SYSTEM_QCOW"
+rm -f "$SYSTEM_RAW"
 qemu-img create -f qcow2 "$USERDATA_QCOW" "${USERDATA_SIZE_GIB}G" >/dev/null
 
-cat <<EOF2
-[OK] Created preinstalled system disk and blank userdata disk:
-  System  : $SYSTEM_QCOW
-  Userdata: $USERDATA_QCOW
-
-Use with virt-install / libvirt:
-  --disk path=$SYSTEM_QCOW,format=qcow2,bus=virtio,serial=sd
-  --disk path=$USERDATA_QCOW,format=qcow2,bus=virtio,serial=ud
-EOF2
+echo "[*] PRODUCT_OUT: $PRODUCT_OUT"
+echo "[*] HOST_OUT_EXECUTABLES: $HOST_OUT_EXECUTABLES"
+echo "[*] AOSP external/u-boot source: $UBOOT_SRC_DIR"
+echo "[*] U-Boot EFI binary: $UBOOT_EFI"
+echo "[OK] System qcow2:   $SYSTEM_QCOW"
+echo "[OK] Userdata qcow2: $USERDATA_QCOW"
+echo "[NOTE] v16.2 assumes U-Boot stock boot_android can be reached with: virtio scan; boot_android virtio 0;misc a"
+echo "[NOTE] If stock bootcmd/env is not sufficient on your platform, a thin wrapper/env adjustment may still be required."
