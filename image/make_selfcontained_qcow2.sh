@@ -220,8 +220,8 @@ restore_uboot_source_patches_if_needed() {
 
 patch_uboot_source_for_efi_objcopy() {
   local makefile="$UBOOT_SRC_DIR/Makefile"
-  local needle='OBJCOPYFLAGS_u-boot-app.efi := $(OBJCOPYFLAGS_EFI)'
-  local replacement='OBJCOPYFLAGS_u-boot-app.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
+  local needle='OBJCOPYFLAGS_u-boot-payload.efi := $(OBJCOPYFLAGS_EFI)'
+  local replacement='OBJCOPYFLAGS_u-boot-payload.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
 
   [[ -f "$makefile" ]] || {
     echo "[!] Missing expected U-Boot Makefile: $makefile" >&2
@@ -229,12 +229,12 @@ patch_uboot_source_for_efi_objcopy() {
   }
 
   if grep -Fq -- "$replacement" "$makefile"; then
-    echo "[*] $makefile already patches u-boot-app.efi to use --output-target."
+    echo "[*] $makefile already patches u-boot-payload.efi to use --output-target."
     return 0
   fi
 
   grep -Fq -- "$needle" "$makefile" || {
-    echo "[!] Could not find OBJCOPYFLAGS_u-boot-app.efi pattern in $makefile" >&2
+    echo "[!] Could not find OBJCOPYFLAGS_u-boot-payload.efi pattern in $makefile" >&2
     exit 1
   }
 
@@ -245,8 +245,8 @@ patch_uboot_source_for_efi_objcopy() {
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
-old = 'OBJCOPYFLAGS_u-boot-app.efi := $(OBJCOPYFLAGS_EFI)'
-new = 'OBJCOPYFLAGS_u-boot-app.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
+old = 'OBJCOPYFLAGS_u-boot-payload.efi := $(OBJCOPYFLAGS_EFI)'
+new = 'OBJCOPYFLAGS_u-boot-payload.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
 text = path.read_text()
 if old not in text:
     raise SystemExit(f"[!] Could not find patch needle in {path}")
@@ -302,13 +302,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-build_uboot_efi_app() {
+build_uboot_efi_payload() {
   mkdir -p "$UBOOT_BUILD_DIR"
   prepare_uboot_tree
   patch_uboot_source_for_efi_objcopy
   patch_uboot_android_bootloader_bcb_call_if_needed
-  echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI application..."
-  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" efi-x86_app64_defconfig >/dev/null
+  echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI payload..."
+  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" efi-x86_payload64_defconfig >/dev/null
 
   if [[ -x "$UBOOT_SRC_DIR/scripts/config" ]]; then
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
@@ -317,6 +317,10 @@ build_uboot_efi_app() {
       -e ANDROID_AB \
       -e CMD_AB_SELECT \
       -e CMD_BOOT_ANDROID \
+      -e LIBAVB \
+      -e AVB_VERIFY \
+      -e CMD_AVB \
+      -e XBC \
       -e VIRTIO \
       -e VIRTIO_BLK \
       -e PARTITIONS \
@@ -338,6 +342,10 @@ build_uboot_efi_app() {
     grep -Eq '^CONFIG_ANDROID_AB=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_CMD_AB_SELECT=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_CMD_BOOT_ANDROID=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_LIBAVB=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_AVB_VERIFY=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_CMD_AVB=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_XBC=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_BOOTDELAY=0$' "$UBOOT_BUILD_DIR/.config"
     python3 - "$UBOOT_BUILD_DIR/.config" <<'PY'
 from pathlib import Path
@@ -364,21 +372,21 @@ PY
   local hostcflags="${HOSTCFLAGS:-} -I$DTC_SRC_DIR/libfdt"
   local hostcppflags="${HOSTCPPFLAGS:-} -I$DTC_SRC_DIR/libfdt"
   local objcopy_bin="${OBJCOPY_BIN:-$(command -v x86_64-linux-gnu-objcopy || command -v objcopy)}"
-  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR"     HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags"     OBJCOPY="$objcopy_bin"     -j"$(nproc)"
+  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR"     HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags"     OBJCOPY="$objcopy_bin"     u-boot-payload.efi -j"$(nproc)"
 }
 
 find_uboot_efi_binary() {
   local cand
   for cand in \
-    "$UBOOT_BUILD_DIR/u-boot-app.efi" \
+    "$UBOOT_BUILD_DIR/u-boot-payload.efi" \
     "$UBOOT_BUILD_DIR/u-boot.efi" \
-    "$UBOOT_BUILD_DIR/u-boot-payload.efi"; do
+    "$UBOOT_BUILD_DIR/u-boot-app.efi"; do
     [[ -f "$cand" ]] && { echo "$cand"; return 0; }
   done
   return 1
 }
 
-build_uboot_efi_app
+build_uboot_efi_payload
 UBOOT_EFI="$(find_uboot_efi_binary)" || {
   echo "[!] Built U-Boot EFI binary not found under $UBOOT_BUILD_DIR" >&2
   exit 1
@@ -498,4 +506,4 @@ echo "[*] Prepared libxbc links under: $UBOOT_SRC_DIR/lib/libxbc"
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.10 temporarily patches external/u-boot/Makefile so u-boot-app.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, and sets bootcmd to boot_android virtio 0:2 a."
+echo "[NOTE] v16.5.13 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, and sets bootcmd to boot_android virtio 0:2 a."
