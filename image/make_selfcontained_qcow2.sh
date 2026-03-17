@@ -3,10 +3,12 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
-# v16.5.4 changes from v16.5.3:
-#   - Temporarily patch external/u-boot/Makefile so the u-boot-app.efi rule uses
-#     --output-target via OBJCOPYFLAGS_u-boot-app.efi, which works with GNU objcopy 2.46.
-#   - Restore the original Makefile on exit via cp -a backup + mv -f restore.
+# v16.5.5 changes from v16.5.4:
+#   - Enable the Android boot command and required Android/AB config symbols explicitly.
+#   - Stop masking scripts/config failures with `|| true` for critical U-Boot configuration.
+#   - Use a bootcmd that follows U-Boot command-line grammar by escaping the semicolon in
+#     the partition-name form understood by boot_android: 0\;misc.
+#   - Keep the temporary top-level Makefile patch that switches EFI objcopy to --output-target.
 #
 # v16.4 changes from v16.3:
 #   - Do NOT clone U-Boot ad-hoc.
@@ -21,7 +23,7 @@ set -euo pipefail
 #   external/dtc
 #
 # Usage:
-#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.3.sh lineage_qemu_tv_virtio
+#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.5.sh lineage_qemu_tv_virtio
 #
 # Optional:
 #   --system-size 16         # GiB, default 16
@@ -237,10 +239,13 @@ build_uboot_efi_app() {
 
   if [[ -x "$UBOOT_SRC_DIR/scripts/config" ]]; then
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
+      -e ANDROID_BOOT_IMAGE \
+      -e ANDROID_BOOTLOADER \
+      -e ANDROID_AB \
+      -e CMD_AB_SELECT \
       -e CMD_BOOT_ANDROID \
       -e VIRTIO \
       -e VIRTIO_BLK \
-      -e CMD_VIRTIO \
       -e PARTITIONS \
       -e EFI_PARTITION \
       -e DOS_PARTITION \
@@ -249,12 +254,21 @@ build_uboot_efi_app() {
       -e CMD_PART \
       -e CMD_FS_GENERIC \
       -e CMD_FAT \
-      -e CMD_EXT4 \
-      -e EFI_LOADER || true
-    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val BOOTDELAY 0 || true
+      -e CMD_EXT4
+    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val BOOTDELAY 0
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
-      --set-str BOOTCOMMAND 'virtio scan; boot_android virtio 0;misc a' || true
+      --set-str BOOTCOMMAND 'boot_android virtio 0\;misc a'
     "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" olddefconfig >/dev/null
+
+    grep -Eq '^CONFIG_ANDROID_BOOT_IMAGE=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_ANDROID_BOOTLOADER=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_ANDROID_AB=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_CMD_AB_SELECT=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_CMD_BOOT_ANDROID=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_VIRTIO=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_VIRTIO_BLK=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_BOOTDELAY=0$' "$UBOOT_BUILD_DIR/.config"
+    grep -Fq 'CONFIG_BOOTCOMMAND="boot_android virtio 0\\;misc a"' "$UBOOT_BUILD_DIR/.config"
   fi
 
   local hostcflags="${HOSTCFLAGS:-} -I$DTC_SRC_DIR/libfdt"
@@ -352,7 +366,7 @@ if [[ -n "$UENV_FILE" ]]; then
 else
   cat > "$ESP_MOUNT/uEnv.txt" <<'ENV'
 bootdelay=0
-bootcmd=virtio scan; boot_android virtio 0;misc a
+bootcmd=boot_android virtio 0\;misc a
 ENV
 fi
 
@@ -392,4 +406,4 @@ echo "[*] Prepared libfdt links under: $UBOOT_SRC_DIR/scripts/dtc and $UBOOT_SRC
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.4 temporarily patches external/u-boot/Makefile so u-boot-app.efi uses --output-target for EFI objcopy, then restores it on exit."
+echo "[NOTE] v16.5.5 temporarily patches external/u-boot/Makefile so u-boot-app.efi uses --output-target for EFI objcopy, then restores it on exit. It also enables Android boot/AB config symbols explicitly and sets bootcmd to boot_android virtio 0\;misc a."
