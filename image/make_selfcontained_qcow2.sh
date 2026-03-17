@@ -3,6 +3,11 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
+# v16.5.4 changes from v16.5.3:
+#   - Temporarily patch external/u-boot/Makefile so the u-boot-app.efi rule uses
+#     --output-target via OBJCOPYFLAGS_u-boot-app.efi, which works with GNU objcopy 2.46.
+#   - Restore the original Makefile on exit via cp -a backup + mv -f restore.
+#
 # v16.4 changes from v16.3:
 #   - Do NOT clone U-Boot ad-hoc.
 #   - Use repo-managed AOSP external/u-boot and external/dtc from the Android tree.
@@ -83,6 +88,7 @@ MODPROBE_BIN="$(command -v modprobe || true)"
 GIT_BIN="$(require_host_tool git)"
 MAKE_BIN="$(require_host_tool make)"
 GCC_BIN="$(require_host_tool gcc)"
+SED_BIN="$(require_host_tool sed)"
 
 TOP="$(pwd -P)"
 SHORT_PRODUCT="$PRODUCT"
@@ -159,9 +165,73 @@ if [[ -z "$UBOOT_BUILD_DIR" ]]; then
   UBOOT_BUILD_DIR="$OUTPUT_DIR/u-boot-build-aosp-main"
 fi
 
+
+TMPDIR=""
+ESP_MOUNT=""
+NBD_DEV=""
+UBOOT_PATCHED_FILE=""
+UBOOT_PATCHED_FILE_BAK=""
+
+restore_uboot_source_patches_if_needed() {
+  if [[ -n "${UBOOT_PATCHED_FILE_BAK:-}" && -f "${UBOOT_PATCHED_FILE_BAK:-}" && -n "${UBOOT_PATCHED_FILE:-}" ]]; then
+    mv -f "$UBOOT_PATCHED_FILE_BAK" "$UBOOT_PATCHED_FILE"
+    UBOOT_PATCHED_FILE=""
+    UBOOT_PATCHED_FILE_BAK=""
+  fi
+}
+
+patch_uboot_source_for_efi_objcopy() {
+  local makefile="$UBOOT_SRC_DIR/Makefile"
+  local needle='OBJCOPYFLAGS_u-boot-app.efi := $(OBJCOPYFLAGS_EFI)'
+  local replacement='OBJCOPYFLAGS_u-boot-app.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
+
+  [[ -f "$makefile" ]] || {
+    echo "[!] Missing expected U-Boot Makefile: $makefile" >&2
+    exit 1
+  }
+
+  if grep -Fq -- "$replacement" "$makefile"; then
+    echo "[*] $makefile already patches u-boot-app.efi to use --output-target."
+    return 0
+  fi
+
+  grep -Fq -- "$needle" "$makefile" || {
+    echo "[!] Could not find OBJCOPYFLAGS_u-boot-app.efi pattern in $makefile" >&2
+    exit 1
+  }
+
+  UBOOT_PATCHED_FILE="$makefile"
+  UBOOT_PATCHED_FILE_BAK="$(mktemp "${TMPDIR:-/tmp}/u-boot-Makefile.XXXXXX")"
+  cp -a "$makefile" "$UBOOT_PATCHED_FILE_BAK"
+  python3 - "$makefile" <<'PYCODE'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+old = 'OBJCOPYFLAGS_u-boot-app.efi := $(OBJCOPYFLAGS_EFI)'
+new = 'OBJCOPYFLAGS_u-boot-app.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
+text = path.read_text()
+if old not in text:
+    raise SystemExit(f"[!] Could not find patch needle in {path}")
+path.write_text(text.replace(old, new, 1))
+PYCODE
+}
+
+cleanup() {
+  set +e
+  sync
+  if [[ -n "$ESP_MOUNT" ]]; then
+    mountpoint -q "$ESP_MOUNT" && umount "$ESP_MOUNT" >/dev/null 2>&1 || true
+  fi
+  [[ -n "$NBD_DEV" ]] && "$QEMU_NBD_BIN" --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
+  restore_uboot_source_patches_if_needed
+  [[ -n "$TMPDIR" ]] && rm -rf "$TMPDIR"
+}
+trap cleanup EXIT
+
 build_uboot_efi_app() {
   mkdir -p "$UBOOT_BUILD_DIR"
   prepare_uboot_tree
+  patch_uboot_source_for_efi_objcopy
   echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI application..."
   "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" efi-x86_app64_defconfig >/dev/null
 
@@ -189,9 +259,8 @@ build_uboot_efi_app() {
 
   local hostcflags="${HOSTCFLAGS:-} -I$DTC_SRC_DIR/libfdt"
   local hostcppflags="${HOSTCPPFLAGS:-} -I$DTC_SRC_DIR/libfdt"
-  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
-    HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags" \
-    -j"$(nproc)"
+  local objcopy_bin="${OBJCOPY_BIN:-$(command -v x86_64-linux-gnu-objcopy || command -v objcopy)}"
+  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR"     HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags"     OBJCOPY="$objcopy_bin"     -j"$(nproc)"
 }
 
 find_uboot_efi_binary() {
@@ -220,15 +289,6 @@ fi
 TMPDIR="$(mktemp -d)"
 ESP_MOUNT="$TMPDIR/esp"
 mkdir -p "$ESP_MOUNT"
-NBD_DEV=""
-cleanup() {
-  set +e
-  sync
-  mountpoint -q "$ESP_MOUNT" && umount "$ESP_MOUNT" >/dev/null 2>&1 || true
-  [[ -n "$NBD_DEV" ]] && "$QEMU_NBD_BIN" --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
-  rm -rf "$TMPDIR"
-}
-trap cleanup EXIT
 
 ceil_mib() {
   local bytes="$1"
@@ -332,4 +392,4 @@ echo "[*] Prepared libfdt links under: $UBOOT_SRC_DIR/scripts/dtc and $UBOOT_SRC
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.4 assumes stock AOSP external/u-boot boot_android is reachable with: virtio scan; boot_android virtio 0;misc a"
+echo "[NOTE] v16.5.4 temporarily patches external/u-boot/Makefile so u-boot-app.efi uses --output-target for EFI objcopy, then restores it on exit."
