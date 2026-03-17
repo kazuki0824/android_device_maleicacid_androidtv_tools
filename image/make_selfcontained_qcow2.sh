@@ -3,6 +3,19 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
+# v16.5.11 changes from v16.5.10:
+#   - Temporarily patch boot/android_bootloader.c so its bcb_get() call matches the
+#     2-argument bcb_get() prototype present in this checkout's include/bcb.h.
+#
+# v16.5.10 changes from v16.5.9:
+#   - Recreate external/u-boot/lib/libxbc symlinks so Android boot image support can include
+#     libxbc headers from bootable/libbootloader/libxbc in this repo checkout.
+#
+# v16.5.8 changes from v16.5.7:
+#   - Replace the brittle exact grep for CONFIG_BOOTCOMMAND with a small parser that accepts the
+#     one- and two-backslash serializations seen in Kconfig/.config workflows and prints the actual
+#     line on mismatch.
+#
 # v16.5.5 changes from v16.5.4:
 #   - Enable the Android boot command and required Android/AB config symbols explicitly.
 #   - Stop masking scripts/config failures with `|| true` for critical U-Boot configuration.
@@ -21,9 +34,10 @@ set -euo pipefail
 # Requires in the repo manifest / synced tree:
 #   external/u-boot
 #   external/dtc
+#   bootable/libbootloader
 #
 # Usage:
-#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.5.sh lineage_qemu_tv_virtio
+#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.10.sh lineage_qemu_tv_virtio
 #
 # Optional:
 #   --system-size 16         # GiB, default 16
@@ -147,8 +161,12 @@ fi
 if [[ -z "$DTC_SRC_DIR" ]]; then
   DTC_SRC_DIR="$TOP/external/dtc"
 fi
+if [[ -z "${LIBBOOTLOADER_XBC_DIR:-}" ]]; then
+  LIBBOOTLOADER_XBC_DIR="$TOP/bootable/libbootloader/libxbc"
+fi
 [[ -d "$UBOOT_SRC_DIR/.git" || -f "$UBOOT_SRC_DIR/Makefile" ]] || { echo "[!] external/u-boot not found at: $UBOOT_SRC_DIR" >&2; exit 1; }
 [[ -d "$DTC_SRC_DIR/libfdt" ]] || { echo "[!] external/dtc/libfdt not found at: $DTC_SRC_DIR/libfdt" >&2; exit 1; }
+[[ -d "$LIBBOOTLOADER_XBC_DIR" ]] || { echo "[!] bootable/libbootloader/libxbc not found at: $LIBBOOTLOADER_XBC_DIR" >&2; exit 1; }
 
 prepare_uboot_tree() {
   # AOSP external/u-boot keeps references to in-tree libfdt locations such as
@@ -158,6 +176,17 @@ prepare_uboot_tree() {
   mkdir -p "$UBOOT_SRC_DIR/scripts/dtc" "$UBOOT_SRC_DIR/include/scripts/dtc"
   ln -sfn "$DTC_SRC_DIR/libfdt" "$UBOOT_SRC_DIR/scripts/dtc/libfdt"
   ln -sfn "$DTC_SRC_DIR/libfdt" "$UBOOT_SRC_DIR/include/scripts/dtc/libfdt"
+
+  # Android boot image support in AOSP external/u-boot expects lib/libxbc/* to resolve into
+  # bootable/libbootloader/libxbc. Recreate those symlinks explicitly so broken relative links
+  # in a mixed Lineage/AOSP checkout do not break image-android.c builds.
+  mkdir -p "$UBOOT_SRC_DIR/lib/libxbc"
+  rm -f "$UBOOT_SRC_DIR/lib/libxbc/COPYING" \
+        "$UBOOT_SRC_DIR/lib/libxbc/libxbc.c" \
+        "$UBOOT_SRC_DIR/lib/libxbc/libxbc.h"
+  ln -sfn "$LIBBOOTLOADER_XBC_DIR/COPYING" "$UBOOT_SRC_DIR/lib/libxbc/COPYING"
+  ln -sfn "$LIBBOOTLOADER_XBC_DIR/libxbc.c" "$UBOOT_SRC_DIR/lib/libxbc/libxbc.c"
+  ln -sfn "$LIBBOOTLOADER_XBC_DIR/libxbc.h" "$UBOOT_SRC_DIR/lib/libxbc/libxbc.h"
 }
 
 OUTPUT_DIR="$PRODUCT_OUT/preinstalled"
@@ -173,8 +202,15 @@ ESP_MOUNT=""
 NBD_DEV=""
 UBOOT_PATCHED_FILE=""
 UBOOT_PATCHED_FILE_BAK=""
+UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE=""
+UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK=""
 
 restore_uboot_source_patches_if_needed() {
+  if [[ -n "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK:-}" && -f "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK:-}" && -n "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE:-}" ]]; then
+    mv -f "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK" "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE"
+    UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE=""
+    UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK=""
+  fi
   if [[ -n "${UBOOT_PATCHED_FILE_BAK:-}" && -f "${UBOOT_PATCHED_FILE_BAK:-}" && -n "${UBOOT_PATCHED_FILE:-}" ]]; then
     mv -f "$UBOOT_PATCHED_FILE_BAK" "$UBOOT_PATCHED_FILE"
     UBOOT_PATCHED_FILE=""
@@ -218,6 +254,42 @@ path.write_text(text.replace(old, new, 1))
 PYCODE
 }
 
+patch_uboot_android_bootloader_bcb_call_if_needed() {
+  local srcfile="$UBOOT_SRC_DIR/boot/android_bootloader.c"
+  local needle='bcb_get(BCB_FIELD_COMMAND, bcb_command, sizeof(bcb_command))'
+  local replacement='bcb_get(BCB_FIELD_COMMAND, bcb_command)'
+
+  [[ -f "$srcfile" ]] || {
+    echo "[!] Missing expected U-Boot source file: $srcfile" >&2
+    exit 1
+  }
+
+  if grep -Fq -- "$replacement" "$srcfile"; then
+    echo "[*] $srcfile already uses 2-argument bcb_get()."
+    return 0
+  fi
+
+  grep -Fq -- "$needle" "$srcfile" || {
+    echo "[!] Could not find android_bootloader.c bcb_get() call pattern in $srcfile" >&2
+    exit 1
+  }
+
+  UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE="$srcfile"
+  UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK="$(mktemp "${TMPDIR:-/tmp}/u-boot-android_bootloader.c.XXXXXX")"
+  cp -a "$srcfile" "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK"
+  python3 - "$srcfile" <<'PYCODE'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+old = 'bcb_get(BCB_FIELD_COMMAND, bcb_command, sizeof(bcb_command))'
+new = 'bcb_get(BCB_FIELD_COMMAND, bcb_command)'
+text = path.read_text()
+if old not in text:
+    raise SystemExit(f"[!] Could not find patch needle in {path}")
+path.write_text(text.replace(old, new, 1))
+PYCODE
+}
+
 cleanup() {
   set +e
   sync
@@ -234,6 +306,7 @@ build_uboot_efi_app() {
   mkdir -p "$UBOOT_BUILD_DIR"
   prepare_uboot_tree
   patch_uboot_source_for_efi_objcopy
+  patch_uboot_android_bootloader_bcb_call_if_needed
   echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI application..."
   "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" efi-x86_app64_defconfig >/dev/null
 
@@ -257,7 +330,7 @@ build_uboot_efi_app() {
       -e CMD_EXT4
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val BOOTDELAY 0
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
-      --set-str BOOTCOMMAND 'boot_android virtio 0\;misc a'
+      --set-str BOOTCOMMAND 'boot_android virtio 0:2 a'
     "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" olddefconfig >/dev/null
 
     grep -Eq '^CONFIG_ANDROID_BOOT_IMAGE=y$' "$UBOOT_BUILD_DIR/.config"
@@ -265,10 +338,27 @@ build_uboot_efi_app() {
     grep -Eq '^CONFIG_ANDROID_AB=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_CMD_AB_SELECT=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_CMD_BOOT_ANDROID=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_VIRTIO=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_VIRTIO_BLK=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_BOOTDELAY=0$' "$UBOOT_BUILD_DIR/.config"
-    grep -Fq 'CONFIG_BOOTCOMMAND="boot_android virtio 0\\;misc a"' "$UBOOT_BUILD_DIR/.config"
+    python3 - "$UBOOT_BUILD_DIR/.config" <<'PY'
+from pathlib import Path
+import sys
+
+cfg = Path(sys.argv[1])
+line = None
+for raw in cfg.read_text().splitlines():
+    if raw.startswith("CONFIG_BOOTCOMMAND="):
+        line = raw
+        break
+
+allowed = {
+    r'CONFIG_BOOTCOMMAND="boot_android virtio 0:2 a"',
+}
+
+if line not in allowed:
+    print("[!] Unexpected CONFIG_BOOTCOMMAND in .config:", file=sys.stderr)
+    print(f"    {line!r}", file=sys.stderr)
+    raise SystemExit(1)
+PY
   fi
 
   local hostcflags="${HOSTCFLAGS:-} -I$DTC_SRC_DIR/libfdt"
@@ -366,7 +456,7 @@ if [[ -n "$UENV_FILE" ]]; then
 else
   cat > "$ESP_MOUNT/uEnv.txt" <<'ENV'
 bootdelay=0
-bootcmd=boot_android virtio 0\;misc a
+bootcmd=boot_android virtio 0:2 a
 ENV
 fi
 
@@ -402,8 +492,10 @@ echo "[*] PRODUCT_OUT: $PRODUCT_OUT"
 echo "[*] HOST_OUT_EXECUTABLES: $HOST_OUT_EXECUTABLES"
 echo "[*] U-Boot source: $UBOOT_SRC_DIR"
 echo "[*] DTC source: $DTC_SRC_DIR"
+echo "[*] libxbc source: $LIBBOOTLOADER_XBC_DIR"
 echo "[*] Prepared libfdt links under: $UBOOT_SRC_DIR/scripts/dtc and $UBOOT_SRC_DIR/include/scripts/dtc"
+echo "[*] Prepared libxbc links under: $UBOOT_SRC_DIR/lib/libxbc"
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.5 temporarily patches external/u-boot/Makefile so u-boot-app.efi uses --output-target for EFI objcopy, then restores it on exit. It also enables Android boot/AB config symbols explicitly and sets bootcmd to boot_android virtio 0\;misc a."
+echo "[NOTE] v16.5.10 temporarily patches external/u-boot/Makefile so u-boot-app.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, and sets bootcmd to boot_android virtio 0:2 a."
