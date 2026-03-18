@@ -3,11 +3,11 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
-# v16.5.18 changes from v16.5.17:
-#   - Fix the libgcc patch so it changes the active Makefile branch instead of merely
-#     noticing that -lgcc text exists behind the CONFIG_CC_IS_CLANG guard.
-#   - Force PLATFORM_LIBGCC to resolve unconditionally via gcc -print-libgcc-file-name
-#     for this native x86_64 build.
+# v16.5.19 changes from v16.5.18:
+#   - Assume the current external/u-boot HEAD already carries its own PLATFORM_LIBGCC logic.
+#   - Drop the brittle Makefile PLATFORM_LIBGCC patching entirely.
+#   - Force the U-Boot build itself to use GCC explicitly (CC/HOSTCC=gcc) so the
+#     HEAD Makefile's libgcc path is the active one.
 #
 # v16.5.17 changes from v16.5.16:
 #   - Drop the failed USE_PRIVATE_LIBGCC attempt.
@@ -47,7 +47,7 @@ set -euo pipefail
 #   bootable/libbootloader
 #
 # Usage:
-#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.18.sh lineage_qemu_tv_virtio
+#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.19.sh lineage_qemu_tv_virtio
 #
 # Optional:
 #   --system-size 16         # GiB, default 16
@@ -214,15 +214,8 @@ UBOOT_PATCHED_FILE=""
 UBOOT_PATCHED_FILE_BAK=""
 UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE=""
 UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK=""
-UBOOT_LIBGCC_PATCHED_FILE=""
-UBOOT_LIBGCC_PATCHED_FILE_BAK=""
 
 restore_uboot_source_patches_if_needed() {
-  if [[ -n "${UBOOT_LIBGCC_PATCHED_FILE_BAK:-}" && -f "${UBOOT_LIBGCC_PATCHED_FILE_BAK:-}" && -n "${UBOOT_LIBGCC_PATCHED_FILE:-}" ]]; then
-    mv -f "$UBOOT_LIBGCC_PATCHED_FILE_BAK" "$UBOOT_LIBGCC_PATCHED_FILE"
-    UBOOT_LIBGCC_PATCHED_FILE=""
-    UBOOT_LIBGCC_PATCHED_FILE_BAK=""
-  fi
   if [[ -n "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK:-}" && -f "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK:-}" && -n "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE:-}" ]]; then
     mv -f "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK" "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE"
     UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE=""
@@ -308,40 +301,6 @@ PYCODE
 }
 
 
-patch_uboot_makefile_for_explicit_libgcc_if_needed() {
-  local makefile="$UBOOT_SRC_DIR/Makefile"
-
-  [[ -f "$makefile" ]] || {
-    echo "[!] Missing expected U-Boot Makefile: $makefile" >&2
-    exit 1
-  }
-
-  UBOOT_LIBGCC_PATCHED_FILE="$makefile"
-  UBOOT_LIBGCC_PATCHED_FILE_BAK="$(mktemp "${TMPDIR:-/tmp}/u-boot-Makefile-libgcc.XXXXXX")"
-  cp -a "$makefile" "$UBOOT_LIBGCC_PATCHED_FILE_BAK"
-  python3 - "$makefile" <<'PYCODE'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text()
-needle = """ifndef CONFIG_CC_IS_CLANG
-PLATFORM_LIBGCC := -L $(shell dirname `$(CC) $(c_flags) -print-libgcc-file-name`) -lgcc
-endif
-
-PLATFORM_LIBS += $(PLATFORM_LIBGCC)"""
-replacement = """PLATFORM_LIBGCC := -L $(shell dirname `gcc -print-libgcc-file-name`) -lgcc
-
-PLATFORM_LIBS += $(PLATFORM_LIBGCC)"""
-if replacement in text:
-    raise SystemExit(0)
-if needle not in text:
-    raise SystemExit(f"[!] Could not find active PLATFORM_LIBGCC block in {path}")
-path.write_text(text.replace(needle, replacement, 1))
-PYCODE
-  echo "[*] Patched $makefile so PLATFORM_LIBGCC resolves unconditionally via gcc -print-libgcc-file-name."
-}
-
 
 cleanup() {
   set +e
@@ -360,9 +319,10 @@ build_uboot_efi_payload() {
   prepare_uboot_tree
   patch_uboot_source_for_efi_objcopy
   patch_uboot_android_bootloader_bcb_call_if_needed
-  patch_uboot_makefile_for_explicit_libgcc_if_needed
   echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI payload..."
-  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" efi-x86_payload64_defconfig >/dev/null
+  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
+    #CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)" CROSS_COMPILE= \
+    efi-x86_payload64_defconfig >/dev/null
 
   if [[ -x "$UBOOT_SRC_DIR/scripts/config" ]]; then
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
@@ -392,7 +352,9 @@ build_uboot_efi_payload() {
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val AVB_BUF_SIZE 0x00100000
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
       --set-str BOOTCOMMAND 'boot_android virtio 0:2 a'
-    "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" olddefconfig >/dev/null
+    "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
+      #CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)" CROSS_COMPILE= \
+      olddefconfig >/dev/null
 
     grep -Eq '^CONFIG_ANDROID_BOOT_IMAGE=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_ANDROID_BOOTLOADER=y$' "$UBOOT_BUILD_DIR/.config"
@@ -431,7 +393,12 @@ PY
   local hostcflags="${HOSTCFLAGS:-} -I$DTC_SRC_DIR/libfdt"
   local hostcppflags="${HOSTCPPFLAGS:-} -I$DTC_SRC_DIR/libfdt"
   local objcopy_bin="${OBJCOPY_BIN:-$(command -v x86_64-linux-gnu-objcopy || command -v objcopy)}"
-  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR"     HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags"     OBJCOPY="$objcopy_bin"     u-boot-payload.efi -j"$(nproc)"
+  local ldbfd_bin="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)"
+  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
+    #CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= \
+    HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags" \
+    OBJCOPY="$objcopy_bin" \
+    u-boot-payload.efi -j"$(nproc)"
 }
 
 find_uboot_efi_binary() {
