@@ -3,15 +3,10 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
-# v16.5.20 changes from v16.5.18:
-#   - Assume the current external/u-boot HEAD already carries its own PLATFORM_LIBGCC logic.
-#   - Drop the brittle Makefile PLATFORM_LIBGCC patching entirely.
-#   - Force the U-Boot build itself to use GCC explicitly (CC/HOSTCC=gcc) so the
-#     HEAD Makefile's libgcc path is the active one.
-#
-# v16.5.17 changes from v16.5.16:
-#   - Drop the failed USE_PRIVATE_LIBGCC attempt.
-#   - Force an explicit libgcc link by temporarily patching external/u-boot/Makefile.
+# v16.5.21 changes from v16.5.20:
+#   - Resolve the x86 payload libgcc archive with the same 32-bit ABI U-Boot uses on x86 payloads
+#     by calling 'gcc -m32 -print-libgcc-file-name'.
+#   - Pass that archive through PLATFORM_LIBGCC on every U-Boot make invocation.
 #
 # v16.5.11 changes from v16.5.10:
 #   - Temporarily patch boot/android_bootloader.c so its bcb_get() call matches the
@@ -321,9 +316,9 @@ build_uboot_efi_payload() {
   patch_uboot_android_bootloader_bcb_call_if_needed
   echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI payload..."
   local ldbfd_bin="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)"
-  local libgcc_archive="$($GCC_BIN -print-libgcc-file-name)"
+  local libgcc_archive="$($GCC_BIN -m32 -print-libgcc-file-name)"
   [[ -n "$libgcc_archive" && -f "$libgcc_archive" ]] || {
-    echo "[!] Could not resolve libgcc archive via: $GCC_BIN -print-libgcc-file-name" >&2
+    echo "[!] Could not resolve 32-bit libgcc archive via: $GCC_BIN -m32 -print-libgcc-file-name" >&2
     exit 1
   }
   "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
@@ -537,4 +532,4 @@ echo "[*] Prepared libxbc links under: $UBOOT_SRC_DIR/lib/libxbc"
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.20 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, passes PLATFORM_LIBGCC as an explicit libgcc archive path on all U-Boot make invocations, and sets bootcmd to boot_android virtio 0:2 a."
+echo "[NOTE] v16.5.21 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, passes a 32-bit libgcc archive path (resolved via gcc -m32 -print-libgcc-file-name) as PLATFORM_LIBGCC on all U-Boot make invocations, and sets bootcmd to boot_android virtio 0:2 a."
