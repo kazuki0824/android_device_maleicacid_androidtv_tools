@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
+# v16.5.16 changes from v16.5.14:
+#   - Adopt the USE_PRIVATE_LIBGCC path instead of adding -lgcc at link time.
+#   - Request CONFIG_USE_PRIVATE_LIBGCC explicitly and verify it after olddefconfig.
+#
 # v16.5.11 changes from v16.5.10:
 #   - Temporarily patch boot/android_bootloader.c so its bcb_get() call matches the
 #     2-argument bcb_get() prototype present in this checkout's include/bcb.h.
@@ -37,7 +41,7 @@ set -euo pipefail
 #   bootable/libbootloader
 #
 # Usage:
-#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.10.sh lineage_qemu_tv_virtio
+#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.16.sh lineage_qemu_tv_virtio
 #
 # Optional:
 #   --system-size 16         # GiB, default 16
@@ -321,6 +325,7 @@ build_uboot_efi_payload() {
       -e AVB_VERIFY \
       -e CMD_AVB \
       -e XBC \
+      -e USE_PRIVATE_LIBGCC \
       -e VIRTIO \
       -e VIRTIO_BLK \
       -e PARTITIONS \
@@ -333,6 +338,8 @@ build_uboot_efi_payload() {
       -e CMD_FAT \
       -e CMD_EXT4
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val BOOTDELAY 0
+    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val AVB_BUF_ADDR 0x0C000000
+    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val AVB_BUF_SIZE 0x00100000
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
       --set-str BOOTCOMMAND 'boot_android virtio 0:2 a'
     "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" olddefconfig >/dev/null
@@ -346,6 +353,9 @@ build_uboot_efi_payload() {
     grep -Eq '^CONFIG_AVB_VERIFY=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_CMD_AVB=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_XBC=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_USE_PRIVATE_LIBGCC=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_AVB_BUF_ADDR=0x0C000000$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_AVB_BUF_SIZE=0x00100000$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_BOOTDELAY=0$' "$UBOOT_BUILD_DIR/.config"
     python3 - "$UBOOT_BUILD_DIR/.config" <<'PY'
 from pathlib import Path
@@ -506,4 +516,4 @@ echo "[*] Prepared libxbc links under: $UBOOT_SRC_DIR/lib/libxbc"
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.13 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, and sets bootcmd to boot_android virtio 0:2 a."
+echo "[NOTE] v16.5.16 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, requests CONFIG_USE_PRIVATE_LIBGCC, and sets bootcmd to boot_android virtio 0:2 a."
