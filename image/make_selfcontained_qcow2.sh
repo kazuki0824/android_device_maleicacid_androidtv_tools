@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
-# v16.5.19 changes from v16.5.18:
+# v16.5.20 changes from v16.5.18:
 #   - Assume the current external/u-boot HEAD already carries its own PLATFORM_LIBGCC logic.
 #   - Drop the brittle Makefile PLATFORM_LIBGCC patching entirely.
 #   - Force the U-Boot build itself to use GCC explicitly (CC/HOSTCC=gcc) so the
@@ -320,8 +320,14 @@ build_uboot_efi_payload() {
   patch_uboot_source_for_efi_objcopy
   patch_uboot_android_bootloader_bcb_call_if_needed
   echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI payload..."
+  local ldbfd_bin="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)"
+  local libgcc_archive="$($GCC_BIN -print-libgcc-file-name)"
+  [[ -n "$libgcc_archive" && -f "$libgcc_archive" ]] || {
+    echo "[!] Could not resolve libgcc archive via: $GCC_BIN -print-libgcc-file-name" >&2
+    exit 1
+  }
   "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
-    #CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)" CROSS_COMPILE= \
+    CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= PLATFORM_LIBGCC="$libgcc_archive" \
     efi-x86_payload64_defconfig >/dev/null
 
   if [[ -x "$UBOOT_SRC_DIR/scripts/config" ]]; then
@@ -353,7 +359,7 @@ build_uboot_efi_payload() {
     "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
       --set-str BOOTCOMMAND 'boot_android virtio 0:2 a'
     "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
-      #CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)" CROSS_COMPILE= \
+      CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= PLATFORM_LIBGCC="$libgcc_archive" \
       olddefconfig >/dev/null
 
     grep -Eq '^CONFIG_ANDROID_BOOT_IMAGE=y$' "$UBOOT_BUILD_DIR/.config"
@@ -393,9 +399,8 @@ PY
   local hostcflags="${HOSTCFLAGS:-} -I$DTC_SRC_DIR/libfdt"
   local hostcppflags="${HOSTCPPFLAGS:-} -I$DTC_SRC_DIR/libfdt"
   local objcopy_bin="${OBJCOPY_BIN:-$(command -v x86_64-linux-gnu-objcopy || command -v objcopy)}"
-  local ldbfd_bin="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)"
   "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
-    #CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= \
+    CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= PLATFORM_LIBGCC="$libgcc_archive" \
     HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags" \
     OBJCOPY="$objcopy_bin" \
     u-boot-payload.efi -j"$(nproc)"
@@ -532,4 +537,4 @@ echo "[*] Prepared libxbc links under: $UBOOT_SRC_DIR/lib/libxbc"
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.17 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, forces an explicit libgcc link by temporarily patching external/u-boot/Makefile, and sets bootcmd to boot_android virtio 0:2 a."
+echo "[NOTE] v16.5.20 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, passes PLATFORM_LIBGCC as an explicit libgcc archive path on all U-Boot make invocations, and sets bootcmd to boot_android virtio 0:2 a."
