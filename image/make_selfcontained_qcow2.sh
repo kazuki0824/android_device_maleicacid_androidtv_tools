@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
 #
-# v16.5.21 changes from v16.5.20:
+# v16.5.24 changes from v16.5.20:
 #   - Resolve the x86 payload libgcc archive with the same 32-bit ABI U-Boot uses on x86 payloads
 #     by calling 'gcc -m32 -print-libgcc-file-name'.
 #   - Pass that archive through PLATFORM_LIBGCC on every U-Boot make invocation.
@@ -336,8 +336,11 @@ build_uboot_efi_payload() {
       -e AVB_VERIFY \
       -e CMD_AVB \
       -e XBC \
+      -e VIRTIO_PCI \
+      -e VIRTIO_PCI_LEGACY \
       -e VIRTIO \
       -e VIRTIO_BLK \
+      -d VIRTIO_CONSOLE \
       -e PARTITIONS \
       -e EFI_PARTITION \
       -e DOS_PARTITION \
@@ -366,6 +369,14 @@ build_uboot_efi_payload() {
     grep -Eq '^CONFIG_AVB_VERIFY=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_CMD_AVB=y$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_XBC=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_VIRTIO_PCI=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_VIRTIO_PCI_LEGACY=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_VIRTIO=y$' "$UBOOT_BUILD_DIR/.config"
+    grep -Eq '^CONFIG_VIRTIO_BLK=y$' "$UBOOT_BUILD_DIR/.config"
+    if grep -Eq '^CONFIG_VIRTIO_CONSOLE=y$' "$UBOOT_BUILD_DIR/.config"; then
+      echo "[!] CONFIG_VIRTIO_CONSOLE is still enabled in final .config" >&2
+      exit 1
+    fi
     grep -Eq '^CONFIG_AVB_BUF_ADDR=0x0C000000$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_AVB_BUF_SIZE=0x00100000$' "$UBOOT_BUILD_DIR/.config"
     grep -Eq '^CONFIG_BOOTDELAY=0$' "$UBOOT_BUILD_DIR/.config"
@@ -532,4 +543,4 @@ echo "[*] Prepared libxbc links under: $UBOOT_SRC_DIR/lib/libxbc"
 echo "[*] U-Boot EFI binary: $UBOOT_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.21 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, applies the android_bootloader.c bcb_get() compatibility patch, passes a 32-bit libgcc archive path (resolved via gcc -m32 -print-libgcc-file-name) as PLATFORM_LIBGCC on all U-Boot make invocations, and sets bootcmd to boot_android virtio 0:2 a."
+echo "[NOTE] v16.5.24 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, explicitly disables CONFIG_VIRTIO_CONSOLE while enabling PCI/block virtio plus legacy PCI virtio support for QEMU defaults, applies the android_bootloader.c bcb_get() compatibility patch, passes a 32-bit libgcc archive path (resolved via gcc -m32 -print-libgcc-file-name) as PLATFORM_LIBGCC on all U-Boot make invocations, and sets bootcmd to boot_android virtio 0:2 a."
