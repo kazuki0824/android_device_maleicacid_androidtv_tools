@@ -1,60 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a U-Boot-first preinstalled Android TV qcow2 for virtio x86_64.
+# Build a GBL-first preinstalled Android TV qcow2 for virtio x86_64.
 #
-# v16.5.24 changes from v16.5.20:
-#   - Resolve the x86 payload libgcc archive with the same 32-bit ABI U-Boot uses on x86 payloads
-#     by calling 'gcc -m32 -print-libgcc-file-name'.
-#   - Pass that archive through PLATFORM_LIBGCC on every U-Boot make invocation.
+# This script intentionally removes all U-Boot-specific build, patch, and bootcmd
+# logic. It builds Google's Generic Bootloader (GBL) from the Android
+# uefi-gbl-mainline manifest, creates two Android ESP partitions as required by
+# GBL deployment docs, and stages the x86_64 GBL EFI app as BOOTX64.EFI on both
+# android_esp_a and android_esp_b. This version uses only the current public
+# GBL build entry (`./tools/bazel run //bootable/libbootloader:gbl_efi_dist`).
 #
-# v16.5.11 changes from v16.5.10:
-#   - Temporarily patch boot/android_bootloader.c so its bcb_get() call matches the
-#     2-argument bcb_get() prototype present in this checkout's include/bcb.h.
-#
-# v16.5.10 changes from v16.5.9:
-#   - Recreate external/u-boot/lib/libxbc symlinks so Android boot image support can include
-#     libxbc headers from bootable/libbootloader/libxbc in this repo checkout.
-#
-# v16.5.8 changes from v16.5.7:
-#   - Replace the brittle exact grep for CONFIG_BOOTCOMMAND with a small parser that accepts the
-#     one- and two-backslash serializations seen in Kconfig/.config workflows and prints the actual
-#     line on mismatch.
-#
-# v16.5.5 changes from v16.5.4:
-#   - Enable the Android boot command and required Android/AB config symbols explicitly.
-#   - Stop masking scripts/config failures with `|| true` for critical U-Boot configuration.
-#   - Use a bootcmd that follows U-Boot command-line grammar by escaping the semicolon in
-#     the partition-name form understood by boot_android: 0\;misc.
-#   - Keep the temporary top-level Makefile patch that switches EFI objcopy to --output-target.
-#
-# v16.4 changes from v16.3:
-#   - Do NOT clone U-Boot ad-hoc.
-#   - Use repo-managed AOSP external/u-boot and external/dtc from the Android tree.
-#   - Build U-Boot with its own make/Kbuild, not Android m.
-#   - Use host PATH tools (sgdisk, qemu-img, qemu-nbd, mkfs.vfat, etc.) for disk work.
+# NOTE: This script only stages a GBL smoke-test image for OVMF. Public GBL docs
+# require Android-specific UEFI protocols (for example boot control / A/B slot
+# management) that stock OVMF may not provide, so full Android boot is not
+# guaranteed by this script alone.
 #
 # Run from Android build root (./.repo must exist).
 #
-# Requires in the repo manifest / synced tree:
-#   external/u-boot
-#   external/dtc
-#   bootable/libbootloader
-#
 # Usage:
-#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.v16.5.19.sh lineage_qemu_tv_virtio
+#   sudo ../android_device_maleicacid_androidtv_tools/image/make_selfcontained_qcow2.gbl.v6.sh lineage_qemu_tv_virtio
 #
 # Optional:
 #   --system-size 16         # GiB, default 16
 #   --userdata-size 16       # GiB, default 16
-#   --esp-size-mib 128       # MiB, default 128
+#   --esp-size-mib 8         # MiB for EACH android_esp_{a,b}, default 8
 #   --release ap2a
 #   --variant userdebug
-#   --uboot-src-dir /path/to/external/u-boot
-#   --dtc-src-dir /path/to/external/dtc
-#   --uboot-build-dir /path/to/build
-#   --uenv /path/to/uEnv.txt
-#   --boot-script /path/to/boot.scr.uimg
 
 PRODUCT="${1:-}"
 shift || true
@@ -64,12 +35,7 @@ RELEASE="ap2a"
 VARIANT="userdebug"
 SYSTEM_SIZE_GIB=16
 USERDATA_SIZE_GIB=16
-ESP_SIZE_MIB=128
-UENV_FILE=""
-BOOT_SCRIPT=""
-UBOOT_SRC_DIR=""
-DTC_SRC_DIR=""
-UBOOT_BUILD_DIR=""
+ESP_SIZE_MIB=64
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -78,18 +44,11 @@ while [[ $# -gt 0 ]]; do
     --system-size) SYSTEM_SIZE_GIB="$2"; shift 2 ;;
     --userdata-size) USERDATA_SIZE_GIB="$2"; shift 2 ;;
     --esp-size-mib) ESP_SIZE_MIB="$2"; shift 2 ;;
-    --uenv) UENV_FILE="$2"; shift 2 ;;
-    --boot-script) BOOT_SCRIPT="$2"; shift 2 ;;
-    --uboot-src-dir) UBOOT_SRC_DIR="$2"; shift 2 ;;
-    --dtc-src-dir) DTC_SRC_DIR="$2"; shift 2 ;;
-    --uboot-build-dir) UBOOT_BUILD_DIR="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
 [[ -d ./.repo ]] || { echo "[!] Run this script from the Android build root (./.repo must exist)." >&2; exit 1; }
-[[ -z "$UENV_FILE" || -f "$UENV_FILE" ]] || { echo "[!] uEnv file not found: $UENV_FILE" >&2; exit 1; }
-[[ -z "$BOOT_SCRIPT" || -f "$BOOT_SCRIPT" ]] || { echo "[!] boot script not found: $BOOT_SCRIPT" >&2; exit 1; }
 
 require_host_tool() {
   local name="$1"
@@ -106,10 +65,9 @@ MKFS_EXT4_BIN="$(require_host_tool mkfs.ext4)"
 QEMU_IMG_BIN="$(require_host_tool qemu-img)"
 QEMU_NBD_BIN="$(require_host_tool qemu-nbd)"
 MODPROBE_BIN="$(command -v modprobe || true)"
-GIT_BIN="$(require_host_tool git)"
+REPO_BIN="$(require_host_tool repo)"
 MAKE_BIN="$(require_host_tool make)"
-GCC_BIN="$(require_host_tool gcc)"
-SED_BIN="$(require_host_tool sed)"
+PYTHON3_BIN="$(require_host_tool python3)"
 
 TOP="$(pwd -P)"
 SHORT_PRODUCT="$PRODUCT"
@@ -160,273 +118,68 @@ for f in "$BOOT_IMG" "$VENDOR_BOOT_IMG" "$SUPER_IMG" "$AVBTOOL" "$SIMG2IMG"; do
   [[ -e "$f" ]] || { echo "[!] Required input not found: $f" >&2; exit 1; }
 done
 
-if [[ -z "$UBOOT_SRC_DIR" ]]; then
-  UBOOT_SRC_DIR="$TOP/external/u-boot"
-fi
-if [[ -z "$DTC_SRC_DIR" ]]; then
-  DTC_SRC_DIR="$TOP/external/dtc"
-fi
-if [[ -z "${LIBBOOTLOADER_XBC_DIR:-}" ]]; then
-  LIBBOOTLOADER_XBC_DIR="$TOP/bootable/libbootloader/libxbc"
-fi
-[[ -d "$UBOOT_SRC_DIR/.git" || -f "$UBOOT_SRC_DIR/Makefile" ]] || { echo "[!] external/u-boot not found at: $UBOOT_SRC_DIR" >&2; exit 1; }
-[[ -d "$DTC_SRC_DIR/libfdt" ]] || { echo "[!] external/dtc/libfdt not found at: $DTC_SRC_DIR/libfdt" >&2; exit 1; }
-[[ -d "$LIBBOOTLOADER_XBC_DIR" ]] || { echo "[!] bootable/libbootloader/libxbc not found at: $LIBBOOTLOADER_XBC_DIR" >&2; exit 1; }
-
-prepare_uboot_tree() {
-  # AOSP external/u-boot keeps references to in-tree libfdt locations such as
-  #   include/linux/libfdt.h -> ../scripts/dtc/libfdt/libfdt.h
-  # and host dtc builds also expect scripts/dtc/libfdt. Since AOSP splits dtc out
-  # into external/dtc, recreate the expected paths as symlinks inside external/u-boot.
-  mkdir -p "$UBOOT_SRC_DIR/scripts/dtc" "$UBOOT_SRC_DIR/include/scripts/dtc"
-  ln -sfn "$DTC_SRC_DIR/libfdt" "$UBOOT_SRC_DIR/scripts/dtc/libfdt"
-  ln -sfn "$DTC_SRC_DIR/libfdt" "$UBOOT_SRC_DIR/include/scripts/dtc/libfdt"
-
-  # Android boot image support in AOSP external/u-boot expects lib/libxbc/* to resolve into
-  # bootable/libbootloader/libxbc. Recreate those symlinks explicitly so broken relative links
-  # in a mixed Lineage/AOSP checkout do not break image-android.c builds.
-  mkdir -p "$UBOOT_SRC_DIR/lib/libxbc"
-  rm -f "$UBOOT_SRC_DIR/lib/libxbc/COPYING" \
-        "$UBOOT_SRC_DIR/lib/libxbc/libxbc.c" \
-        "$UBOOT_SRC_DIR/lib/libxbc/libxbc.h"
-  ln -sfn "$LIBBOOTLOADER_XBC_DIR/COPYING" "$UBOOT_SRC_DIR/lib/libxbc/COPYING"
-  ln -sfn "$LIBBOOTLOADER_XBC_DIR/libxbc.c" "$UBOOT_SRC_DIR/lib/libxbc/libxbc.c"
-  ln -sfn "$LIBBOOTLOADER_XBC_DIR/libxbc.h" "$UBOOT_SRC_DIR/lib/libxbc/libxbc.h"
-}
-
 OUTPUT_DIR="$PRODUCT_OUT/preinstalled"
 mkdir -p "$OUTPUT_DIR"
 
-if [[ -z "$UBOOT_BUILD_DIR" ]]; then
-  UBOOT_BUILD_DIR="$OUTPUT_DIR/u-boot-build-aosp-main"
+TOP_PARENT="$(dirname "$TOP")"
+GBL_WORK_DIR="${TOP_PARENT}/$(basename "$TOP")-gbl-src"
+GBL_EFI=""
+
+RUN_AS_USER=()
+if [[ ${EUID:-$(id -u)} -eq 0 && -n "${SUDO_USER:-}" ]]; then
+  ORIG_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  [[ -n "$ORIG_HOME" ]] || ORIG_HOME="/home/$SUDO_USER"
+  RUN_AS_USER=(sudo -u "$SUDO_USER" env HOME="$ORIG_HOME")
 fi
 
-
-TMPDIR=""
-ESP_MOUNT=""
-NBD_DEV=""
-UBOOT_PATCHED_FILE=""
-UBOOT_PATCHED_FILE_BAK=""
-UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE=""
-UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK=""
-
-restore_uboot_source_patches_if_needed() {
-  if [[ -n "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK:-}" && -f "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK:-}" && -n "${UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE:-}" ]]; then
-    mv -f "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK" "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE"
-    UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE=""
-    UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK=""
+build_gbl_x86_64_efi() {
+  if [[ ${EUID:-$(id -u)} -eq 0 && -n "${SUDO_USER:-}" ]]; then
+    "${RUN_AS_USER[@]}" mkdir -p "$GBL_WORK_DIR"
+  else
+    mkdir -p "$GBL_WORK_DIR"
   fi
-  if [[ -n "${UBOOT_PATCHED_FILE_BAK:-}" && -f "${UBOOT_PATCHED_FILE_BAK:-}" && -n "${UBOOT_PATCHED_FILE:-}" ]]; then
-    mv -f "$UBOOT_PATCHED_FILE_BAK" "$UBOOT_PATCHED_FILE"
-    UBOOT_PATCHED_FILE=""
-    UBOOT_PATCHED_FILE_BAK=""
+
+  if [[ ! -d "$GBL_WORK_DIR/.repo" ]]; then
+    echo "[*] Initializing GBL source tree at $GBL_WORK_DIR"
+    (
+      cd "$GBL_WORK_DIR"
+      "${RUN_AS_USER[@]}" "$REPO_BIN" init -u https://android.googlesource.com/kernel/manifest -b uefi-gbl-mainline
+    )
   fi
-}
 
-patch_uboot_source_for_efi_objcopy() {
-  local makefile="$UBOOT_SRC_DIR/Makefile"
-  local needle='OBJCOPYFLAGS_u-boot-payload.efi := $(OBJCOPYFLAGS_EFI)'
-  local replacement='OBJCOPYFLAGS_u-boot-payload.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
+  echo "[*] Syncing GBL source tree..."
+  (
+    cd "$GBL_WORK_DIR"
+    "${RUN_AS_USER[@]}" "$REPO_BIN" sync -j"$(nproc)"
+  )
 
-  [[ -f "$makefile" ]] || {
-    echo "[!] Missing expected U-Boot Makefile: $makefile" >&2
+  [[ -x "$GBL_WORK_DIR/tools/bazel" ]] || {
+    echo "[!] GBL source tree does not provide tools/bazel after repo sync:" >&2
+    echo "    $GBL_WORK_DIR/tools/bazel" >&2
+    echo "[!] This script intentionally uses only the current public GBL build entry." >&2
     exit 1
   }
 
-  if grep -Fq -- "$replacement" "$makefile"; then
-    echo "[*] $makefile already patches u-boot-payload.efi to use --output-target."
-    return 0
-  fi
+  echo "[*] Building GBL via tools/bazel for x86_64..."
+  (
+    cd "$GBL_WORK_DIR"
+    "${RUN_AS_USER[@]}" ./tools/bazel run //bootable/libbootloader:gbl_efi_dist
+  )
 
-  grep -Fq -- "$needle" "$makefile" || {
-    echo "[!] Could not find OBJCOPYFLAGS_u-boot-payload.efi pattern in $makefile" >&2
-    exit 1
-  }
-
-  UBOOT_PATCHED_FILE="$makefile"
-  UBOOT_PATCHED_FILE_BAK="$(mktemp "${TMPDIR:-/tmp}/u-boot-Makefile.XXXXXX")"
-  cp -a "$makefile" "$UBOOT_PATCHED_FILE_BAK"
-  python3 - "$makefile" <<'PYCODE'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-old = 'OBJCOPYFLAGS_u-boot-payload.efi := $(OBJCOPYFLAGS_EFI)'
-new = 'OBJCOPYFLAGS_u-boot-payload.efi := $(patsubst --target=%,--output-target=%,$(OBJCOPYFLAGS_EFI))'
-text = path.read_text()
-if old not in text:
-    raise SystemExit(f"[!] Could not find patch needle in {path}")
-path.write_text(text.replace(old, new, 1))
-PYCODE
-}
-
-patch_uboot_android_bootloader_bcb_call_if_needed() {
-  local srcfile="$UBOOT_SRC_DIR/boot/android_bootloader.c"
-  local needle='bcb_get(BCB_FIELD_COMMAND, bcb_command, sizeof(bcb_command))'
-  local replacement='bcb_get(BCB_FIELD_COMMAND, bcb_command)'
-
-  [[ -f "$srcfile" ]] || {
-    echo "[!] Missing expected U-Boot source file: $srcfile" >&2
-    exit 1
-  }
-
-  if grep -Fq -- "$replacement" "$srcfile"; then
-    echo "[*] $srcfile already uses 2-argument bcb_get()."
-    return 0
-  fi
-
-  grep -Fq -- "$needle" "$srcfile" || {
-    echo "[!] Could not find android_bootloader.c bcb_get() call pattern in $srcfile" >&2
-    exit 1
-  }
-
-  UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE="$srcfile"
-  UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK="$(mktemp "${TMPDIR:-/tmp}/u-boot-android_bootloader.c.XXXXXX")"
-  cp -a "$srcfile" "$UBOOT_ANDROID_BOOTLOADER_PATCHED_FILE_BAK"
-  python3 - "$srcfile" <<'PYCODE'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-old = 'bcb_get(BCB_FIELD_COMMAND, bcb_command, sizeof(bcb_command))'
-new = 'bcb_get(BCB_FIELD_COMMAND, bcb_command)'
-text = path.read_text()
-if old not in text:
-    raise SystemExit(f"[!] Could not find patch needle in {path}")
-path.write_text(text.replace(old, new, 1))
-PYCODE
-}
-
-
-
-cleanup() {
-  set +e
-  sync
-  if [[ -n "$ESP_MOUNT" ]]; then
-    mountpoint -q "$ESP_MOUNT" && umount "$ESP_MOUNT" >/dev/null 2>&1 || true
-  fi
-  [[ -n "$NBD_DEV" ]] && "$QEMU_NBD_BIN" --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
-  restore_uboot_source_patches_if_needed
-  [[ -n "$TMPDIR" ]] && rm -rf "$TMPDIR"
-}
-trap cleanup EXIT
-
-build_uboot_efi_payload() {
-  mkdir -p "$UBOOT_BUILD_DIR"
-  prepare_uboot_tree
-  patch_uboot_source_for_efi_objcopy
-  patch_uboot_android_bootloader_bcb_call_if_needed
-  echo "[*] Building repo-managed AOSP external/u-boot as x86_64 EFI payload..."
-  local ldbfd_bin="$(command -v x86_64-linux-gnu-ld.bfd || command -v ld.bfd || command -v ld)"
-  local libgcc_archive="$($GCC_BIN -m32 -print-libgcc-file-name)"
-  [[ -n "$libgcc_archive" && -f "$libgcc_archive" ]] || {
-    echo "[!] Could not resolve 32-bit libgcc archive via: $GCC_BIN -m32 -print-libgcc-file-name" >&2
-    exit 1
-  }
-  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
-    CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= PLATFORM_LIBGCC="$libgcc_archive" \
-    efi-x86_payload64_defconfig >/dev/null
-
-  if [[ -x "$UBOOT_SRC_DIR/scripts/config" ]]; then
-    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
-      -e ANDROID_BOOT_IMAGE \
-      -e ANDROID_BOOTLOADER \
-      -e ANDROID_AB \
-      -e CMD_AB_SELECT \
-      -e CMD_BOOT_ANDROID \
-      -e LIBAVB \
-      -e AVB_VERIFY \
-      -e CMD_AVB \
-      -e XBC \
-      -e VIRTIO_PCI \
-      -e VIRTIO_PCI_LEGACY \
-      -e VIRTIO \
-      -e VIRTIO_BLK \
-      -d VIRTIO_CONSOLE \
-      -e PARTITIONS \
-      -e EFI_PARTITION \
-      -e DOS_PARTITION \
-      -e PARTITION_UUIDS \
-      -e CMD_GPT \
-      -e CMD_PART \
-      -e CMD_FS_GENERIC \
-      -e CMD_FAT \
-      -e CMD_EXT4
-    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val BOOTDELAY 0
-    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" -d USE_PRIVATE_LIBGCC
-    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val AVB_BUF_ADDR 0x0C000000
-    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" --set-val AVB_BUF_SIZE 0x00100000
-    "$UBOOT_SRC_DIR/scripts/config" --file "$UBOOT_BUILD_DIR/.config" \
-      --set-str BOOTCOMMAND 'boot_android virtio 0:2 a'
-    "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
-      CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= PLATFORM_LIBGCC="$libgcc_archive" \
-      olddefconfig >/dev/null
-
-    grep -Eq '^CONFIG_ANDROID_BOOT_IMAGE=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_ANDROID_BOOTLOADER=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_ANDROID_AB=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_CMD_AB_SELECT=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_CMD_BOOT_ANDROID=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_LIBAVB=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_AVB_VERIFY=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_CMD_AVB=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_XBC=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_VIRTIO_PCI=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_VIRTIO_PCI_LEGACY=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_VIRTIO=y$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_VIRTIO_BLK=y$' "$UBOOT_BUILD_DIR/.config"
-    if grep -Eq '^CONFIG_VIRTIO_CONSOLE=y$' "$UBOOT_BUILD_DIR/.config"; then
-      echo "[!] CONFIG_VIRTIO_CONSOLE is still enabled in final .config" >&2
-      exit 1
+  local gbl_efi_out="$GBL_WORK_DIR/out/gbl_efi"
+  for cand in     "$gbl_efi_out/BOOTX64.EFI"     "$gbl_efi_out/bootx64.efi"; do
+    if [[ -f "$cand" ]]; then
+      GBL_EFI="$cand"
+      break
     fi
-    grep -Eq '^CONFIG_AVB_BUF_ADDR=0x0C000000$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_AVB_BUF_SIZE=0x00100000$' "$UBOOT_BUILD_DIR/.config"
-    grep -Eq '^CONFIG_BOOTDELAY=0$' "$UBOOT_BUILD_DIR/.config"
-    python3 - "$UBOOT_BUILD_DIR/.config" <<'PY'
-from pathlib import Path
-import sys
-
-cfg = Path(sys.argv[1])
-line = None
-for raw in cfg.read_text().splitlines():
-    if raw.startswith("CONFIG_BOOTCOMMAND="):
-        line = raw
-        break
-
-allowed = {
-    r'CONFIG_BOOTCOMMAND="boot_android virtio 0:2 a"',
-}
-
-if line not in allowed:
-    print("[!] Unexpected CONFIG_BOOTCOMMAND in .config:", file=sys.stderr)
-    print(f"    {line!r}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-  fi
-
-  local hostcflags="${HOSTCFLAGS:-} -I$DTC_SRC_DIR/libfdt"
-  local hostcppflags="${HOSTCPPFLAGS:-} -I$DTC_SRC_DIR/libfdt"
-  local objcopy_bin="${OBJCOPY_BIN:-$(command -v x86_64-linux-gnu-objcopy || command -v objcopy)}"
-  "$MAKE_BIN" -C "$UBOOT_SRC_DIR" O="$UBOOT_BUILD_DIR" \
-    CC="$GCC_BIN" HOSTCC="$GCC_BIN" LD="$ldbfd_bin" CROSS_COMPILE= PLATFORM_LIBGCC="$libgcc_archive" \
-    HOSTCFLAGS="$hostcflags" HOSTCPPFLAGS="$hostcppflags" \
-    OBJCOPY="$objcopy_bin" \
-    u-boot-payload.efi -j"$(nproc)"
-}
-
-find_uboot_efi_binary() {
-  local cand
-  for cand in \
-    "$UBOOT_BUILD_DIR/u-boot-payload.efi" \
-    "$UBOOT_BUILD_DIR/u-boot.efi" \
-    "$UBOOT_BUILD_DIR/u-boot-app.efi"; do
-    [[ -f "$cand" ]] && { echo "$cand"; return 0; }
   done
-  return 1
-}
-
-build_uboot_efi_payload
-UBOOT_EFI="$(find_uboot_efi_binary)" || {
-  echo "[!] Built U-Boot EFI binary not found under $UBOOT_BUILD_DIR" >&2
-  exit 1
+  if [[ -z "$GBL_EFI" ]]; then
+    GBL_EFI="$(find "$gbl_efi_out" "$GBL_WORK_DIR" -type f \( -iname 'bootx64.efi' -o -iname '*x86_64*.efi' \) 2>/dev/null | head -n1 || true)"
+  fi
+  [[ -n "$GBL_EFI" && -f "$GBL_EFI" ]] || {
+    echo "[!] Failed to locate built GBL x86_64 EFI app under $gbl_efi_out / $GBL_WORK_DIR" >&2
+    exit 1
+  }
 }
 
 # Generate disabled vbmeta if missing.
@@ -436,8 +189,19 @@ if [[ ! -f "$VBMETA_IMG" ]]; then
 fi
 
 TMPDIR="$(mktemp -d)"
-ESP_MOUNT="$TMPDIR/esp"
-mkdir -p "$ESP_MOUNT"
+ESP_A_MOUNT="$TMPDIR/android_esp_a"
+ESP_B_MOUNT="$TMPDIR/android_esp_b"
+mkdir -p "$ESP_A_MOUNT" "$ESP_B_MOUNT"
+NBD_DEV=""
+cleanup() {
+  set +e
+  sync
+  mountpoint -q "$ESP_A_MOUNT" && umount "$ESP_A_MOUNT" >/dev/null 2>&1 || true
+  mountpoint -q "$ESP_B_MOUNT" && umount "$ESP_B_MOUNT" >/dev/null 2>&1 || true
+  [[ -n "$NBD_DEV" ]] && "$QEMU_NBD_BIN" --disconnect "$NBD_DEV" >/dev/null 2>&1 || true
+  rm -rf "$TMPDIR"
+}
+trap cleanup EXIT
 
 ceil_mib() {
   local bytes="$1"
@@ -471,6 +235,8 @@ SYSTEM_RAW="$OUTPUT_DIR/androidtv-${PRODUCT}.raw"
 SYSTEM_QCOW="$OUTPUT_DIR/androidtv-${PRODUCT}.qcow2"
 USERDATA_QCOW="$OUTPUT_DIR/androidtv-${PRODUCT}-userdata.qcow2"
 
+build_gbl_x86_64_efi
+
 rm -f "$SYSTEM_RAW" "$SYSTEM_QCOW" "$USERDATA_QCOW"
 "$QEMU_IMG_BIN" create -f raw "$SYSTEM_RAW" "${SYSTEM_SIZE_GIB}G" >/dev/null
 [[ -n "$MODPROBE_BIN" ]] && "$MODPROBE_BIN" nbd max_part=32 >/dev/null 2>&1 || true
@@ -480,50 +246,48 @@ NBD_DEV=/dev/nbd0
 "$PARTPROBE_BIN" "$NBD_DEV" || true
 sleep 1
 "$SGDISK_BIN" --clear "$NBD_DEV"
-"$SGDISK_BIN" --new=1:0:+${ESP_SIZE_MIB}M    --typecode=1:ef00 --change-name=1:EFI           "$NBD_DEV"
-"$SGDISK_BIN" --new=2:0:+${MISC_MIB}M        --typecode=2:8300 --change-name=2:misc          "$NBD_DEV"
-"$SGDISK_BIN" --new=3:0:+${BOOT_MIB}M        --typecode=3:8300 --change-name=3:boot_a        "$NBD_DEV"
-"$SGDISK_BIN" --new=4:0:+${VENDOR_BOOT_MIB}M --typecode=4:8300 --change-name=4:vendor_boot_a "$NBD_DEV"
-"$SGDISK_BIN" --new=5:0:+${VBMETA_MIB}M      --typecode=5:8300 --change-name=5:vbmeta_a      "$NBD_DEV"
-"$SGDISK_BIN" --new=6:0:+${SUPER_MIB}M       --typecode=6:8300 --change-name=6:super         "$NBD_DEV"
-"$SGDISK_BIN" --new=7:0:+${PERSIST_MIB}M     --typecode=7:8300 --change-name=7:persist       "$NBD_DEV"
-"$SGDISK_BIN" --new=8:0:+${METADATA_MIB}M    --typecode=8:8300 --change-name=8:metadata      "$NBD_DEV"
+"$SGDISK_BIN" --new=1:0:+${ESP_SIZE_MIB}M     --typecode=1:ef00 --change-name=1:android_esp_a "$NBD_DEV"
+"$SGDISK_BIN" --new=2:0:+${ESP_SIZE_MIB}M     --typecode=2:ef00 --change-name=2:android_esp_b "$NBD_DEV"
+"$SGDISK_BIN" --new=3:0:+${MISC_MIB}M         --typecode=3:8300 --change-name=3:misc          "$NBD_DEV"
+"$SGDISK_BIN" --new=4:0:+${BOOT_MIB}M         --typecode=4:8300 --change-name=4:boot_a        "$NBD_DEV"
+"$SGDISK_BIN" --new=5:0:+${BOOT_MIB}M         --typecode=5:8300 --change-name=5:boot_b        "$NBD_DEV"
+"$SGDISK_BIN" --new=6:0:+${VENDOR_BOOT_MIB}M  --typecode=6:8300 --change-name=6:vendor_boot_a "$NBD_DEV"
+"$SGDISK_BIN" --new=7:0:+${VENDOR_BOOT_MIB}M  --typecode=7:8300 --change-name=7:vendor_boot_b "$NBD_DEV"
+"$SGDISK_BIN" --new=8:0:+${VBMETA_MIB}M       --typecode=8:8300 --change-name=8:vbmeta_a      "$NBD_DEV"
+"$SGDISK_BIN" --new=9:0:+${VBMETA_MIB}M       --typecode=9:8300 --change-name=9:vbmeta_b      "$NBD_DEV"
+"$SGDISK_BIN" --new=10:0:+${SUPER_MIB}M       --typecode=10:8300 --change-name=10:super       "$NBD_DEV"
+"$SGDISK_BIN" --new=11:0:+${METADATA_MIB}M    --typecode=11:8300 --change-name=11:metadata    "$NBD_DEV"
+"$SGDISK_BIN" --new=12:0:+${PERSIST_MIB}M     --typecode=12:8300 --change-name=12:persist     "$NBD_DEV"
 "$PARTPROBE_BIN" "$NBD_DEV" || true
 sleep 1
 
-"$MKFS_VFAT_BIN" -F 32 -n EFI "${NBD_DEV}p1" >/dev/null
-mount "${NBD_DEV}p1" "$ESP_MOUNT"
-mkdir -p "$ESP_MOUNT/EFI/BOOT"
-cp "$UBOOT_EFI" "$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI"
-
-if [[ -n "$UENV_FILE" ]]; then
-  cp "$UENV_FILE" "$ESP_MOUNT/uEnv.txt"
-else
-  cat > "$ESP_MOUNT/uEnv.txt" <<'ENV'
-bootdelay=0
-bootcmd=boot_android virtio 0:2 a
-ENV
-fi
-
-if [[ -n "$BOOT_SCRIPT" ]]; then
-  cp "$BOOT_SCRIPT" "$ESP_MOUNT/boot.scr.uimg"
-fi
+"$MKFS_VFAT_BIN" -F 32 -n ANDESP_A "${NBD_DEV}p1" >/dev/null
+"$MKFS_VFAT_BIN" -F 32 -n ANDESP_B "${NBD_DEV}p2" >/dev/null
+mount "${NBD_DEV}p1" "$ESP_A_MOUNT"
+mount "${NBD_DEV}p2" "$ESP_B_MOUNT"
+mkdir -p "$ESP_A_MOUNT/EFI/BOOT" "$ESP_B_MOUNT/EFI/BOOT"
+cp "$GBL_EFI" "$ESP_A_MOUNT/EFI/BOOT/BOOTX64.EFI"
+cp "$GBL_EFI" "$ESP_B_MOUNT/EFI/BOOT/BOOTX64.EFI"
 sync
-umount "$ESP_MOUNT"
+umount "$ESP_A_MOUNT"
+umount "$ESP_B_MOUNT"
 
 # Write Android payload partitions.
-dd if=/dev/zero of="${NBD_DEV}p2" bs=1M count="$MISC_MIB" conv=fsync,notrunc status=none
+dd if=/dev/zero of="${NBD_DEV}p3" bs=1M count="$MISC_MIB" conv=fsync,notrunc status=none
 if [[ -f "$PERSIST_IMG" ]]; then
-  dd if="$PERSIST_IMG" of="${NBD_DEV}p7" bs=4M conv=fsync,notrunc status=progress
+  dd if="$PERSIST_IMG" of="${NBD_DEV}p12" bs=4M conv=fsync,notrunc status=progress
 else
-  "$MKFS_EXT4_BIN" -F -L persist "${NBD_DEV}p7" >/dev/null 2>&1 || true
+  "$MKFS_EXT4_BIN" -F -L persist "${NBD_DEV}p12" >/dev/null 2>&1 || true
 fi
-"$MKFS_EXT4_BIN" -F -L metadata "${NBD_DEV}p8" >/dev/null 2>&1 || true
+"$MKFS_EXT4_BIN" -F -L metadata "${NBD_DEV}p11" >/dev/null 2>&1 || true
 
-dd if="$BOOT_IMG"        of="${NBD_DEV}p3" bs=4M conv=fsync,notrunc status=progress
-dd if="$VENDOR_BOOT_IMG" of="${NBD_DEV}p4" bs=4M conv=fsync,notrunc status=progress
-dd if="$VBMETA_IMG"      of="${NBD_DEV}p5" bs=4M conv=fsync,notrunc status=progress
-dd if="$SUPER_RAW"       of="${NBD_DEV}p6" bs=4M conv=fsync,notrunc status=progress
+dd if="$BOOT_IMG"        of="${NBD_DEV}p4" bs=4M conv=fsync,notrunc status=progress
+dd if="$BOOT_IMG"        of="${NBD_DEV}p5" bs=4M conv=fsync,notrunc status=progress
+dd if="$VENDOR_BOOT_IMG" of="${NBD_DEV}p6" bs=4M conv=fsync,notrunc status=progress
+dd if="$VENDOR_BOOT_IMG" of="${NBD_DEV}p7" bs=4M conv=fsync,notrunc status=progress
+dd if="$VBMETA_IMG"      of="${NBD_DEV}p8" bs=4M conv=fsync,notrunc status=progress
+dd if="$VBMETA_IMG"      of="${NBD_DEV}p9" bs=4M conv=fsync,notrunc status=progress
+dd if="$SUPER_RAW"       of="${NBD_DEV}p10" bs=4M conv=fsync,notrunc status=progress
 
 sync
 "$QEMU_NBD_BIN" --disconnect "$NBD_DEV"
@@ -535,12 +299,9 @@ rm -f "$SYSTEM_RAW"
 
 echo "[*] PRODUCT_OUT: $PRODUCT_OUT"
 echo "[*] HOST_OUT_EXECUTABLES: $HOST_OUT_EXECUTABLES"
-echo "[*] U-Boot source: $UBOOT_SRC_DIR"
-echo "[*] DTC source: $DTC_SRC_DIR"
-echo "[*] libxbc source: $LIBBOOTLOADER_XBC_DIR"
-echo "[*] Prepared libfdt links under: $UBOOT_SRC_DIR/scripts/dtc and $UBOOT_SRC_DIR/include/scripts/dtc"
-echo "[*] Prepared libxbc links under: $UBOOT_SRC_DIR/lib/libxbc"
-echo "[*] U-Boot EFI binary: $UBOOT_EFI"
+echo "[*] GBL source tree: $GBL_WORK_DIR"
+echo "[*] GBL EFI binary: $GBL_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] v16.5.24 temporarily patches external/u-boot/Makefile so u-boot-payload.efi uses --output-target for EFI objcopy, then restores it on exit. It also prepares libxbc symlinks, enables Android boot/AB config symbols explicitly, explicitly disables CONFIG_VIRTIO_CONSOLE while enabling PCI/block virtio plus legacy PCI virtio support for QEMU defaults, applies the android_bootloader.c bcb_get() compatibility patch, passes a 32-bit libgcc archive path (resolved via gcc -m32 -print-libgcc-file-name) as PLATFORM_LIBGCC on all U-Boot make invocations, and sets bootcmd to boot_android virtio 0:2 a."
+echo "[NOTE] BOOTX64.EFI on GPT partitions android_esp_a/android_esp_b is GBL (FAT labels: ANDESP_A/ANDESP_B)."
+echo "[NOTE] This is an OVMF smoke-test path only. Public GBL docs require Android-specific UEFI protocols that stock OVMF may not provide."
