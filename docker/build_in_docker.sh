@@ -50,7 +50,7 @@ sudo docker run --rm -it \
     rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || \
       sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
 
-    m -j\$(nproc) bootimage vendorbootimage superimage
+    m -j\$(nproc) bootimage vendorbootimage superimage dtbimage dtboimage
 
     PRODUCT_OUT=\"\$(get_build_var PRODUCT_OUT)\"
     echo '[build] Done.'

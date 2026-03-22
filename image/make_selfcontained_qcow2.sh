@@ -167,14 +167,16 @@ build_gbl_x86_64_efi() {
   )
 
   local gbl_efi_out="$GBL_WORK_DIR/out/gbl_efi"
-  for cand in     "$gbl_efi_out/BOOTX64.EFI"     "$gbl_efi_out/bootx64.efi"; do
+  # Prefer development flavor only. In gbl-mainline efi/BUILD, gbl_x86_64.efi is
+  # copied from :x86_64_dev for test/distribution compatibility.
+  for cand in     "$gbl_efi_out/gbl_x86_64.efi"     "$gbl_efi_out/x86_64_dev.efi"     "$gbl_efi_out/x86_64-dev.efi"     "$gbl_efi_out/BOOTX64.EFI"     "$gbl_efi_out/bootx64.efi"; do
     if [[ -f "$cand" ]]; then
       GBL_EFI="$cand"
       break
     fi
   done
   if [[ -z "$GBL_EFI" ]]; then
-    GBL_EFI="$(find "$gbl_efi_out" "$GBL_WORK_DIR" -type f \( -iname 'bootx64.efi' -o -iname '*x86_64*.efi' \) 2>/dev/null | head -n1 || true)"
+    GBL_EFI="$(find "$gbl_efi_out" "$GBL_WORK_DIR" -type f \( -iname 'gbl_x86_64.efi' -o -iname '*x86_64*dev*.efi' -o -iname 'bootx64.efi' \) 2>/dev/null | head -n1 || true)"
   fi
   [[ -n "$GBL_EFI" && -f "$GBL_EFI" ]] || {
     echo "[!] Failed to locate built GBL x86_64 EFI app under $gbl_efi_out / $GBL_WORK_DIR" >&2
@@ -303,5 +305,5 @@ echo "[*] GBL source tree: $GBL_WORK_DIR"
 echo "[*] GBL EFI binary: $GBL_EFI"
 echo "[OK] System qcow2:   $SYSTEM_QCOW"
 echo "[OK] Userdata qcow2: $USERDATA_QCOW"
-echo "[NOTE] BOOTX64.EFI on GPT partitions android_esp_a/android_esp_b is GBL (FAT labels: ANDESP_A/ANDESP_B)."
+echo "[NOTE] BOOTX64.EFI on GPT partitions android_esp_a/android_esp_b is the GBL development flavor (FAT labels: ANDESP_A/ANDESP_B)."
 echo "[NOTE] This is an OVMF smoke-test path only. Public GBL docs require Android-specific UEFI protocols that stock OVMF may not provide."
