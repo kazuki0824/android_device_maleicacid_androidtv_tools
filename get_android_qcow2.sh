@@ -5,13 +5,20 @@ set -euo pipefail
 cd $(dirname "$0")
 SCRIPTDIR=$(dirname "$(realpath "${BASH_SOURCE:-0}")")
 
-VARIANT=${1:-r86s}
-
 mkdir ./build-work || true
 pushd ./build-work
-repo init -u https://github.com/kazuki0824/android --git-lfs -b lineage-21.0
-repo sync -j$(nproc) -c -d
-$SCRIPTDIR/docker/build_in_docker.sh lineage_${VARIANT}_tv_virtio
-sudo apt install binutils-multiarch libssl-dev
-sudo $SCRIPTDIR/image/make_selfcontained_qcow2.sh lineage_${VARIANT}_tv_virtio
+repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --git-lfs #--no-clone-bundle
+
+mkdir -p .repo/local_manifests/
+cp -f $SCRIPTDIR/*.xml .repo/local_manifests/
+#repo sync -j$(nproc) -c -d
+
+bash -lc  "
+source build/envsetup.sh
+vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
+"
+
+$SCRIPTDIR/docker/build_in_docker.sh
+$SCRIPTDIR/image/make_disk_image.sh
+
 popd

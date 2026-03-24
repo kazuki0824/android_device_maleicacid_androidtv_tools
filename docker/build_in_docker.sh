@@ -14,14 +14,7 @@ set -euo pipefail
 #   ../android_device_maleicacid_androidtv_tools/docker/build_in_docker.v9.sh lineage_qemu_tv_virtio
 #   ../android_device_maleicacid_androidtv_tools/docker/build_in_docker.v9.sh lineage_r86s_tv_virtio
 
-PRODUCT="${1:-}"
-RELEASE="ap2a"
-VARIANT="userdebug"
-
-if [[ -z "$PRODUCT" ]]; then
-  echo "Usage: $0 <lineage_qemu_tv_virtio|lineage_r86s_tv_virtio>" >&2
-  exit 1
-fi
+PRODUCT="${1:-virtio_x86_64_tv_grub}"
 
 [[ -d ./.repo ]] || { echo "[!] Run this script from the Android build root (./.repo must exist)." >&2; exit 1; }
 
@@ -39,10 +32,8 @@ sudo docker run --rm -it \
   -w /workspace \
   aosp-build \
   bash -lc "
-    export OUT_DIR_COMMON_BASE=\${OUT_DIR_COMMON_BASE:-/workspace/out-${PRODUCT}}
-
     source build/envsetup.sh
-    lunch ${PRODUCT}-${RELEASE}-${VARIANT}
+    breakfast ${PRODUCT}
 
     set -e
 
@@ -50,15 +41,5 @@ sudo docker run --rm -it \
     rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || \
       sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
 
-    m -j\$(nproc) bootimage vendorbootimage superimage dtbimage dtboimage
-
-    PRODUCT_OUT=\"\$(get_build_var PRODUCT_OUT)\"
-    echo '[build] Done.'
-    echo \"[build] PRODUCT_OUT: \${PRODUCT_OUT}\"
-    echo \"[build] Expected artifacts: \${PRODUCT_OUT}/boot.img \${PRODUCT_OUT}/vendor_boot.img \${PRODUCT_OUT}/super.img\"
-    if [[ -f \"\${PRODUCT_OUT}/vbmeta.img\" ]]; then
-      echo \"[build] Optional artifact present: \${PRODUCT_OUT}/vbmeta.img\"
-    else
-      echo '[build] vbmeta.img not present; qcow2 script will generate disabled vbmeta if needed.'
-    fi
+    m -j\$(nproc) diskimage-vda
   "

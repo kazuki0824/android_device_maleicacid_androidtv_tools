@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <project
+      path="device/maleicacid/virtio_x86_64_tv_grub"
+      name="kazuki0824/virtio_x86_64_tv_grub"
+      remote="github"
+      revision="main" />
+
+  <!-- microG (GApps-equivalent) built from repo-synced source under Soong orchestration -->
+  <project name="kazuki0824/android_vendor_maleicacid_microg"
+           path="vendor/maleicacid/microg"
+           remote="github"
+           revision="main" />
+
+  <!-- Upstream sources fetched by repo (requirement 10*) -->
+  <project name="microg/GmsCore"
+           path="vendor/maleicacid/microg/upstream/GmsCore"
+           remote="github"
+           revision="master" />
+
+</manifest>
