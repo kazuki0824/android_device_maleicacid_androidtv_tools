@@ -6,16 +6,10 @@
       remote="github"
       revision="main" />
 
-  <!-- microG (GApps-equivalent) built from repo-synced source under Soong orchestration -->
-  <project name="kazuki0824/android_vendor_maleicacid_microg"
-           path="vendor/maleicacid/microg"
-           remote="github"
-           revision="main" />
-
-  <!-- Upstream sources fetched by repo (requirement 10*) -->
-  <project name="microg/GmsCore"
-           path="vendor/maleicacid/microg/upstream/GmsCore"
-           remote="github"
-           revision="master" />
+  <project
+      path="vendor/gapps_tv"
+      name="WayDroid-ATV/vendor_gapps_tv"
+      remote="github"
+      revision="upsilon_x86_64" />
 
 </manifest>
