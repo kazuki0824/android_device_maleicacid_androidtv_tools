@@ -19,6 +19,8 @@ vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
 "
 
 $SCRIPTDIR/docker/build_in_docker.sh
+sudo rm -f out/target/product/virtio_x86_64_tv_grub/disk-vda.qcow2 || true
+sudo rm -f out/target/product/virtio_x86_64_tv_grub/userdata-empty.qcow2 || true
 $SCRIPTDIR/image/make_disk_image.sh
 
 popd
