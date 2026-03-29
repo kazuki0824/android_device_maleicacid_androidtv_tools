@@ -6,10 +6,24 @@
       remote="github"
       revision="main" />
 
+  <!-- Widevine L3 -->
+  <project
+      path="vendor/google/proprietary/widevine-prebuilt"
+      name="supremegamers/vendor_google_proprietary_widevine-prebuilt"
+      remote="github"
+      revision="refs/heads/celadon" />
+
+  <!-- libhoudini -->
+  <project
+      path="vendor/intel/proprietary/houdini"
+      name="WayDroid-ATV/vendor_intel_proprietary_houdini"
+      remote="github"
+      revision="refs/heads/hpe-14" />
+
+  <!-- TV GApps -->
   <project
       path="vendor/gapps_tv"
       name="WayDroid-ATV/vendor_gapps_tv"
       remote="github"
-      revision="upsilon_x86_64" />
-
+      revision="refs/heads/upsilon_x86_64" />
 </manifest>
