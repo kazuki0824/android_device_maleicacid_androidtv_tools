@@ -41,5 +41,5 @@ sudo docker run --rm -it \
     rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || \
       sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
 
-    m -j\$(nproc) diskimage-vda
+    m -j\$(nproc) diskimage-vda ota
   "
