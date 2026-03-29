@@ -11,7 +11,7 @@ repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --git-lfs
 
 mkdir -p .repo/local_manifests/
 cp -f $SCRIPTDIR/*.xml .repo/local_manifests/
-repo sync -j$(nproc) -c -d --force-remove-dirty || true
+repo sync -j$(nproc) -c --force-remove-dirty || true
 
 bash -lc  "
 source build/envsetup.sh
