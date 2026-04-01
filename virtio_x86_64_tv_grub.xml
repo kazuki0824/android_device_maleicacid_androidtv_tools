@@ -13,12 +13,12 @@
       remote="github"
       revision="refs/heads/celadon" />
 
-  <!-- libhoudini -->
+  <!-- libndk_translation -->
   <project
-      path="vendor/intel/proprietary/houdini"
-      name="WayDroid-ATV/vendor_intel_proprietary_houdini"
+      path="vendor/google/proprietary/ndk_translation-prebuilt"
+      name="supremegamers/vendor_google_proprietary_ndk_translation-prebuilt"
       remote="github"
-      revision="refs/heads/hpe-14" />
+      revision="refs/heads/chromeos_zork" />
 
   <!-- TV GApps -->
   <project
