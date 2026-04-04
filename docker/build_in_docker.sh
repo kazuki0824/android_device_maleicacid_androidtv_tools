@@ -32,14 +32,11 @@ sudo docker run --rm -it \
   -w /workspace \
   aosp-build \
   bash -lc "
+    echo 'Preparing breakfast...'
     source build/envsetup.sh
     breakfast ${PRODUCT}
 
     set -e
 
-    # microG workaround
-    rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || \
-      sudo rm -f vendor/maleicacid/microg/upstream/GmsCore/Android.mk || true
-
-    m -j\$(nproc) diskimage-vda ota
+    m -j\$(nproc) diskimage-vda otapackage
   "
