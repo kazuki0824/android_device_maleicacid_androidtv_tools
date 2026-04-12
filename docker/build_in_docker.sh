@@ -26,7 +26,7 @@ popd >/dev/null
 
 mkdir -p ./ccache
 
-sudo docker run --rm -it \
+sudo docker run --rm -i \
   --mount "type=bind,src=$PWD/ccache,dst=/home/builder/.ccache" \
   -v "$(pwd):/workspace" \
   -w /workspace \
