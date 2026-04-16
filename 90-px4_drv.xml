@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <project
-      name="tsukumijima/px4_drv"
+      name="kazuki0824/px4_drv"
       path="external/px4_drv"
       remote="github"
       revision="develop" />
