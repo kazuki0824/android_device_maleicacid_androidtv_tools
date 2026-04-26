@@ -4,5 +4,5 @@
       name="kazuki0824/px4_drv"
       path="external/px4_drv"
       remote="github"
-      revision="develop" />
+      revision="feat/android-ddk" />
 </manifest>
