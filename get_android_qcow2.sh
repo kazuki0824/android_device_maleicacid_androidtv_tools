@@ -12,10 +12,50 @@ WORKSPACE_ROOT="$(dirname "${BUILD_WORK_DIR}")"
 
 PRODUCT="r86s_virtio_tv"
 
+PX4_DRV_GIT_URL="${PX4_DRV_GIT_URL:-https://github.com/kazuki0824/px4_drv.git}"
+PX4_DRV_GIT_REF="${PX4_DRV_GIT_REF:-feat/android-ddk}"
+
+PX4_KLEAF_MANIFEST_URL="${PX4_KLEAF_MANIFEST_URL:-https://android.googlesource.com/kernel/manifest}"
+PX4_KLEAF_MANIFEST_BRANCH="${PX4_KLEAF_MANIFEST_BRANCH:-common-android15-6.6}"
+
+sync_px4_drv_source() {
+  local px4_drv_src="${WORKSPACE_ROOT}/px4_drv"
+
+  if [ -d "${px4_drv_src}/.git" ]; then
+    (
+      cd "${px4_drv_src}"
+      git fetch --all --tags
+      git checkout "${PX4_DRV_GIT_REF}"
+      git pull --ff-only || true
+    )
+  elif [ -d "${px4_drv_src}" ]; then
+    echo "Using existing non-git px4_drv source tree: ${px4_drv_src}"
+  else
+    git clone "${PX4_DRV_GIT_URL}" "${px4_drv_src}"
+    (
+      cd "${px4_drv_src}"
+      git checkout "${PX4_DRV_GIT_REF}"
+      git pull --ff-only || true
+    )
+  fi
+
+  for required in BUILD.bazel Kbuild Makefile; do
+    if [ ! -f "${px4_drv_src}/${required}" ]; then
+      echo "error: px4_drv source tree is missing ${required}: ${px4_drv_src}/${required}" >&2
+      echo "       PX4_DRV_GIT_REF must point to the Kleaf-minimal px4_drv layout." >&2
+      exit 1
+    fi
+  done
+
+  if [ -f "${px4_drv_src}/driver/BUILD.bazel" ]; then
+    echo "error: driver/BUILD.bazel must not exist for the top-level Kleaf module layout." >&2
+    echo "       PX4_DRV_GIT_REF must point to the Kleaf-minimal px4_drv layout." >&2
+    exit 1
+  fi
+}
+
 sync_px4_ack_checkout() {
   local px4_kleaf_ack_dir="${WORKSPACE_ROOT}/px4_drv_ack"
-  local manifest_url="https://android.googlesource.com/kernel/manifest"
-  local manifest_branch="common-android15-6.6"
 
   mkdir -p "${px4_kleaf_ack_dir}"
 
@@ -24,8 +64,8 @@ sync_px4_ack_checkout() {
 
     if [ ! -d .repo ]; then
       repo init \
-        -u "${manifest_url}" \
-        -b "${manifest_branch}"
+        -u "${PX4_KLEAF_MANIFEST_URL}" \
+        -b "${PX4_KLEAF_MANIFEST_BRANCH}"
     fi
 
     repo sync -j"$(nproc)" -c --force-remove-dirty
@@ -50,7 +90,9 @@ sync_px4_ack_checkout() {
 build_px4_vendor_modules_zip() {
   local px4_kleaf_ack_dir="${WORKSPACE_ROOT}/px4_drv_ack"
   local px4_drv_src="${WORKSPACE_ROOT}/px4_drv"
-  local px4_module_archive="${BUILD_WORK_DIR}/device/maleicacid/virtio_x86_64_tv_grub/px4_drv/prebuilt/px4_drv_vendor_modules.zip"
+
+  local device_tree_dir="${BUILD_WORK_DIR}/device/maleicacid/virtio_x86_64_tv_grub"
+  local px4_module_archive="${device_tree_dir}/px4_drv/prebuilt/px4_drv_vendor_modules.zip"
 
   local px4_gen_dir="${BUILD_WORK_DIR}/out/px4_drv_prebuild"
   local px4_work="${px4_gen_dir}/px4_drv"
@@ -59,6 +101,12 @@ build_px4_vendor_modules_zip() {
   local px4_stage_dir="${px4_kleaf_ack_dir}/local_modules/px4_drv"
   local px4_bazel_target="//local_modules/px4_drv:px4_drv"
   local px4_built_ko="${px4_kleaf_ack_dir}/bazel-bin/local_modules/px4_drv/px4_drv/px4_drv.ko"
+
+  if [ ! -d "${device_tree_dir}" ]; then
+    echo "error: device tree is missing: ${device_tree_dir}" >&2
+    echo "       This directory must be supplied by repo sync/local manifest, not created by this script." >&2
+    exit 1
+  fi
 
   if [ ! -d "${px4_drv_src}" ]; then
     echo "error: px4_drv source tree not found: ${px4_drv_src}" >&2
@@ -138,6 +186,7 @@ source build/envsetup.sh
 vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
 "
 
+sync_px4_drv_source
 sync_px4_ack_checkout
 build_px4_vendor_modules_zip
 
