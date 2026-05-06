@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<manifest>
-  <project
-      name="kazuki0824/px4_drv"
-      path="external/px4_drv"
-      remote="github"
-      revision="feat/android-ddk" />
-</manifest>

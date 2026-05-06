@@ -38,5 +38,5 @@ sudo docker run --rm -i \
 
     set -e
 
-    m -j\$(nproc) diskimage-vda otapackage
+    m -j\$(nproc) -k 0 diskimage-vda otapackage
   "

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <project
-      name="kazuki0824/tuner_hal"
-      path="vendor/maleicacid/tv/tuner_hal"
+      name="kazuki0824/tv"
+      path="vendor/maleicacid/tv"
       remote="github"
       revision="main" />
 </manifest>
