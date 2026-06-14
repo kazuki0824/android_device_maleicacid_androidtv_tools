@@ -14,7 +14,7 @@ set -euo pipefail
 #   ../android_device_maleicacid_androidtv_tools/docker/build_in_docker.v9.sh lineage_qemu_tv_virtio
 #   ../android_device_maleicacid_androidtv_tools/docker/build_in_docker.v9.sh lineage_r86s_tv_virtio
 
-PRODUCT="${1:-virtio_x86_64_tv_grub}"
+PRODUCT="$1"
 
 [[ -d ./.repo ]] || { echo "[!] Run this script from the Android build root (./.repo must exist)." >&2; exit 1; }
 
