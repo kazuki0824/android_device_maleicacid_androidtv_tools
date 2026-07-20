@@ -191,8 +191,10 @@ sync_px4_ack_checkout
 build_px4_vendor_modules_zip
 
 "${SCRIPTDIR}/docker/build_in_docker.sh" "${PRODUCT}"
+"${SCRIPTDIR}/image/verify_px4_in_raw.sh" "${PRODUCT}"
 sudo rm -f "out/target/product/${PRODUCT}/disk-vda.qcow2" || true
 sudo rm -f "out/target/product/${PRODUCT}/userdata-empty.qcow2" || true
-"${SCRIPTDIR}/image/make_disk_image.sh"
+"${SCRIPTDIR}/image/make_disk_image.sh" \
+  --product-out "out/target/product/${PRODUCT}"
 
 popd
