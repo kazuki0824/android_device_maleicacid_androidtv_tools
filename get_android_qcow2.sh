@@ -16,7 +16,7 @@ PX4_DRV_GIT_URL="${PX4_DRV_GIT_URL:-https://github.com/kazuki0824/px4_drv.git}"
 PX4_DRV_GIT_REF="${PX4_DRV_GIT_REF:-feat/android-ddk}"
 
 PX4_KLEAF_MANIFEST_URL="${PX4_KLEAF_MANIFEST_URL:-https://android.googlesource.com/kernel/manifest}"
-PX4_KLEAF_MANIFEST_BRANCH="${PX4_KLEAF_MANIFEST_BRANCH:-common-android15-6.6}"
+PX4_KLEAF_MANIFEST_BRANCH=""
 
 sync_px4_drv_source() {
   local px4_drv_src="${WORKSPACE_ROOT}/px4_drv"
@@ -54,19 +54,61 @@ sync_px4_drv_source() {
   fi
 }
 
+resolve_px4_kleaf_manifest_branch() {
+  local vars_file="${BUILD_WORK_DIR}/out/px4_drv_build_vars.txt"
+  local platform_version
+  local kernel_version
+
+  mkdir -p "$(dirname "${vars_file}")"
+
+  PRODUCT="${PRODUCT}" VARS_FILE="${vars_file}" bash -lc '
+    set -euo pipefail
+    source build/envsetup.sh >/dev/null
+    breakfast "${PRODUCT}" >/dev/null
+    {
+      get_build_var PLATFORM_VERSION
+      get_build_var TARGET_KERNEL_VERSION
+    } > "${VARS_FILE}"
+  '
+
+  mapfile -t build_vars < "${vars_file}"
+  if [ "${#build_vars[@]}" -ne 2 ]; then
+    echo "error: failed to resolve Android/kernel versions from the Android build tree" >&2
+    exit 1
+  fi
+
+  platform_version="${build_vars[0]%%.*}"
+  kernel_version="${build_vars[1]}"
+
+  if [[ ! "${platform_version}" =~ ^[0-9]+$ ]]; then
+    echo "error: unexpected PLATFORM_VERSION from build tree: ${build_vars[0]}" >&2
+    exit 1
+  fi
+  if [[ ! "${kernel_version}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "error: unexpected TARGET_KERNEL_VERSION from build tree: ${kernel_version}" >&2
+    exit 1
+  fi
+
+  PX4_KLEAF_MANIFEST_BRANCH="common-android${platform_version}-${kernel_version}"
+  echo "px4_drv Kleaf branch derived from Android build tree: ${PX4_KLEAF_MANIFEST_BRANCH}"
+}
+
 sync_px4_ack_checkout() {
   local px4_kleaf_ack_dir="${WORKSPACE_ROOT}/px4_drv_ack"
+
+  if [ -z "${PX4_KLEAF_MANIFEST_BRANCH}" ]; then
+    echo "error: PX4 Kleaf manifest branch has not been resolved from the Android build tree" >&2
+    exit 1
+  fi
 
   mkdir -p "${px4_kleaf_ack_dir}"
 
   (
     cd "${px4_kleaf_ack_dir}"
 
-    if [ ! -d .repo ]; then
-      repo init \
-        -u "${PX4_KLEAF_MANIFEST_URL}" \
-        -b "${PX4_KLEAF_MANIFEST_BRANCH}"
-    fi
+    repo init \
+      -u "${PX4_KLEAF_MANIFEST_URL}" \
+      -b "${PX4_KLEAF_MANIFEST_BRANCH}"
 
     repo sync -j"$(nproc)" -c --force-remove-dirty
   )
@@ -147,7 +189,7 @@ build_px4_vendor_modules_zip() {
   cp -a "${px4_work}" "${px4_stage_dir}"
   touch "${px4_stage_dir}/.maleicacid_px4_ddk_generated"
 
-  echo "Building ${px4_bazel_target}"
+  echo "Building ${px4_bazel_target} against ${PX4_KLEAF_MANIFEST_BRANCH}"
   (
     cd "${px4_kleaf_ack_dir}"
     tools/bazel build "${px4_bazel_target}"
@@ -187,6 +229,7 @@ vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
 "
 
 sync_px4_drv_source
+resolve_px4_kleaf_manifest_branch
 sync_px4_ack_checkout
 build_px4_vendor_modules_zip
 
