@@ -62,7 +62,7 @@ resolve_px4_kleaf_manifest_branch() {
   mkdir -p "$(dirname "${vars_file}")"
 
   PRODUCT="${PRODUCT}" VARS_FILE="${vars_file}" bash -lc '
-    set -euo pipefail
+    set -eo pipefail
     source build/envsetup.sh >/dev/null
     breakfast "${PRODUCT}" >/dev/null
     {
