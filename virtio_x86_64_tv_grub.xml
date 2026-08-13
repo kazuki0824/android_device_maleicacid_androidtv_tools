@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
+  <remote  name="gitlab"
+           fetch="https://gitlab.com" />
   <project
       path="device/maleicacid/virtio_x86_64_tv_grub"
       name="kazuki0824/virtio_x86_64_tv_grub"
@@ -24,6 +26,6 @@
   <project
       path="vendor/gapps_tv"
       name="WayDroid-ATV/vendor_gapps_tv"
-      remote="github"
-      revision="refs/heads/upsilon_x86_64" />
+      remote="gitlab"
+      revision="refs/heads/vic" />
 </manifest>
