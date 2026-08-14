@@ -11,8 +11,8 @@ PRODUCT="${ANDROID_PRODUCT:-virtio_x86_64_tv_grub}"
 
 mkdir -p .repo/local_manifests/
 command cp -fv "${SCRIPTDIR}"/*.xml .repo/local_manifests/
-repo init -u https://github.com/LineageOS/android.git -b lineage-22.2 --git-lfs
 repo sync -j"$(nproc)" -c --force-remove-dirty || true
+repo init -u https://github.com/LineageOS/android.git -b lineage-22.1 --git-lfs
 
 bash -lc "
 source build/envsetup.sh
