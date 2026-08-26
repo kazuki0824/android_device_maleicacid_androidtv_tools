@@ -4,5 +4,10 @@
       name="kazuki0824/tv"
       path="vendor/maleicacid/tv"
       remote="github"
-      revision="main" />
+      revision="docs/future-work-design-completion" />
+  <project
+      name="kazuki0824/libaribcaption-android"
+      path="vendor/maleicacid/libaribcaption"
+      remote="github"
+      revision="agent/add-soong-build" />
 </manifest>
