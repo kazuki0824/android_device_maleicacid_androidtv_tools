@@ -17,6 +17,9 @@ repo sync -j"$(nproc)" -c --force-remove-dirty --force-sync || true
 bash -lc "
 source build/envsetup.sh
 vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
+
+sed -i '/defaults: \["maleicacid_tuner_hal2_loom_test_defaults"\],/d' \
+    vendor/maleicacid/tv/tuner_hal2/Android.bp
 "
 
 "${SCRIPTDIR}/docker/build_in_docker.sh" "${PRODUCT}"
