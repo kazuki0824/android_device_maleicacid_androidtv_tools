@@ -10,21 +10,21 @@
 
   <!-- Widevine L3 -->
   <project
-      path="vendor/google/proprietary/widevine-prebuilt"
+      path="vendor/maleicacid/google/proprietary/widevine-prebuilt"
       name="supremegamers/vendor_google_proprietary_widevine-prebuilt"
       remote="github"
       revision="refs/heads/celadon" />
 
   <!-- libndk_translation -->
   <project
-      path="vendor/google/proprietary/ndk_translation-prebuilt"
+      path="vendor/maleicacid/google/proprietary/ndk_translation-prebuilt"
       name="WayDroid-ATV/vendor_google_proprietary_ndk_translation-prebuilt"
       remote="github"
       revision="refs/heads/14arm_15arm64" />
 
   <!-- TV GApps -->
   <project
-      path="vendor/gapps_tv"
+      path="vendor/maleicacid/google/gapps_tv"
       name="WayDroid-ATV/vendor_gapps_tv"
       remote="gitlab"
       revision="refs/heads/vic" />
