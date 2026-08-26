@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPTDIR="$(dirname "$(realpath "${BASH_SOURCE:-0}")")"
 
-mkdir ./build-work || true
+mkdir -p ./build-work
 pushd ./build-work
 
 PRODUCT="${ANDROID_PRODUCT:-virtio_x86_64_tv_grub}"
@@ -18,7 +18,17 @@ bash -lc "
 source build/envsetup.sh
 vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
 
-sed -i '/defaults: \["maleicacid_tuner_hal2_loom_test_defaults"\],/d' \
+PATCH=vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_hardware_tv_tuner_nullable_current.patch
+if git -C hardware/interfaces apply --check \"\$PWD/\$PATCH\"; then
+    git -C hardware/interfaces apply \"\$PWD/\$PATCH\"
+elif git -C hardware/interfaces apply --reverse --check \"\$PWD/\$PATCH\"; then
+    echo '[+] Tuner nullable AIDL current patch is already applied.'
+else
+    echo '[!] Tuner nullable AIDL current patch does not apply cleanly.' >&2
+    exit 1
+fi
+
+sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
 "
 
