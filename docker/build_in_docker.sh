@@ -39,7 +39,7 @@ sudo docker run --rm -i \
   bash -lc "
     echo 'Preparing breakfast...'
     source build/envsetup.sh
-    breakfast ${PRODUCT}
+    breakfast lineage_${PRODUCT}-maleicacid_tv_unfrozen-userdebug
 
     set -e
 
