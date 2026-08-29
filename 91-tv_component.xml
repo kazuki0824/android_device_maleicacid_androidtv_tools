@@ -14,5 +14,5 @@
       name="kazuki0824/libyakisoba-cross"
       path="vendor/maleicacid/libyakisoba"
       remote="github"
-      revision="master" />
+      revision="add-soong-android-bp" />
 </manifest>
