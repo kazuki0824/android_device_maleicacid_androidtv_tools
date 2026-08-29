@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lib32readline-dev lib32z1-dev libdw-dev libelf-dev libgnutls28-dev \
     lz4 libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
     schedtool squashfs-tools xsltproc zip zlib1g-dev \
-    e2fsprogs file unzip openssh-client qemu-utils util-linux \
+    e2fsprogs file unzip openssh-client qemu-utils fdisk \
  && rm -rf /var/lib/apt/lists/* \
  && locale-gen en_US.UTF-8
 
@@ -41,6 +41,21 @@ RUN . /etc/os-release && \
         lib32ncurses5-dev libncurses5 libncurses5-dev \
       && rm -rf /var/lib/apt/lists/*; \
     fi
+
+# FAILED: out/target/product/virtio_x86_64_tv_grub/obj_x86/MESON_MESA3D/.build.timestamp
+# meson.build:4:0: ERROR: Meson version is 0.61.2 but project requires >= 1.1.0
+# in LineageOS 22.1
+# NOTE: Use meson_hermetic instead
+# https://android.googlesource.com/platform/external/mesa3d/+/refs/tags/android-15.0.0_r11/meson_to_hermetic
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      python3-mako \
+      python3-yaml \
+      ninja-build \
+ && rm -rf /var/lib/apt/lists/*
+RUN python3 -m pip install --no-cache-dir 'meson>=1.1,<2'
 
 # Create a non-root user matching host UID/GID (so bind mounts won't become root-owned)
 RUN groupadd -g ${GID} ${USER} && useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USER} \
