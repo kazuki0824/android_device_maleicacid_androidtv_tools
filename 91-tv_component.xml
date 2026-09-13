@@ -5,4 +5,14 @@
       path="vendor/maleicacid/tv"
       remote="github"
       revision="main" />
+  <project
+      name="kazuki0824/libaribcaption-android"
+      path="vendor/maleicacid/libaribcaption"
+      remote="github"
+      revision="agent/add-soong-build" />
+  <project
+      name="kazuki0824/libyakisoba-cross"
+      path="vendor/maleicacid/libyakisoba"
+      remote="github"
+      revision="add-soong-android-bp" />
 </manifest>

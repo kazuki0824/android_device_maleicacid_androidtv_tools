@@ -16,7 +16,7 @@ set -euo pipefail
 
 PRODUCT="$1"
 
-[[ -d ./.repo ]] || { echo "[!] Run this script from the Android build root (./.repo must exist)." >&2; exit 1; }
+[[ -d ./.repo ]] || { echo "[!] Run this script from Android build root (./.repo must exist)." >&2; exit 1; }
 
 TOOLS_DIR="$(cd -- "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")" && pwd)"
 
@@ -26,6 +26,11 @@ popd >/dev/null
 
 mkdir -p ./ccache
 
+UPDATE_API_CMD=""
+if [[ "${TUNER_AIDL_UPDATE_API:-0}" == "1" ]]; then
+  UPDATE_API_CMD='m android.hardware.tv.tuner-update-api'
+fi
+
 sudo docker run --rm -i \
   --mount "type=bind,src=$PWD/ccache,dst=/home/builder/.ccache" \
   -v "$(pwd):/workspace" \
@@ -34,9 +39,10 @@ sudo docker run --rm -i \
   bash -lc "
     echo 'Preparing breakfast...'
     source build/envsetup.sh
-    breakfast ${PRODUCT}
+    breakfast lineage_${PRODUCT}-maleicacid_tv_unfrozen-userdebug
 
     set -e
 
+    ${UPDATE_API_CMD}
     m -j\$(nproc) -k 0 diskimage-vda otapackage
   "
