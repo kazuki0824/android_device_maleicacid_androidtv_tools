@@ -19,6 +19,7 @@ source build/envsetup.sh
 vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
 
 PATCH=vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_hardware_tv_tuner_nullable_current.patch
+git -C hardware/interfaces/tv/tuner reset --hard
 if git -C hardware/interfaces apply --check \"\$PWD/\$PATCH\"; then
     git -C hardware/interfaces apply \"\$PWD/\$PATCH\"
 elif git -C hardware/interfaces apply --reverse --check \"\$PWD/\$PATCH\"; then
