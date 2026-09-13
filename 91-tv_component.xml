@@ -4,7 +4,7 @@
       name="kazuki0824/tv"
       path="vendor/maleicacid/tv"
       remote="github"
-      revision="fix/tuner-hal2-soong-clippy-hygiene" />
+      revision="design/r52-contracts" />
   <project
       name="kazuki0824/libaribcaption-android"
       path="vendor/maleicacid/libaribcaption"
