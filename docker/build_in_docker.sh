@@ -31,18 +31,18 @@ if [[ "${TUNER_AIDL_UPDATE_API:-0}" == "1" ]]; then
   UPDATE_API_CMD='m android.hardware.tv.tuner-update-api'
 fi
 
-sudo docker run --rm -i \
+sudo docker run --rm -it \
   --mount "type=bind,src=$PWD/ccache,dst=/home/builder/.ccache" \
   -v "$(pwd):/workspace" \
   -w /workspace \
   aosp-build \
   bash -lc "
-    echo 'Preparing breakfast...'
     source build/envsetup.sh
+
+    echo 'Preparing breakfast...'
     breakfast lineage_${PRODUCT}-maleicacid_tv_unfrozen-userdebug
 
     set -e
 
-    ${UPDATE_API_CMD}
-    m -j\$(nproc) -k 0 diskimage-vda otapackage
+    ${UPDATE_API_CMD} && m -j\$(nproc) -k 0 --config-only --skip-config diskimage-vda #otapackage
   "
