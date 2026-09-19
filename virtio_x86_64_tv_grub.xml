@@ -25,7 +25,7 @@
   <!-- TV GApps -->
   <project
       path="vendor/gapps_tv"
-      name="WayDroid-ATV/vendor_gapps_tv"
-      remote="gitlab"
+      name="kazuki0824/vendor_gapps_tv"
+      remote="github"
       revision="refs/heads/vic" />
 </manifest>
