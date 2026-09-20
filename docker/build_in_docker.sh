@@ -44,5 +44,6 @@ sudo docker run --rm -it \
 
     set -e
 
-    ${UPDATE_API_CMD} && m -j\$(nproc) -k 0 --config-only --skip-config diskimage-vda #otapackage
+    ${UPDATE_API_CMD}
+    m -j\$(nproc) -k 0 diskimage-vda #otapackage
   "
