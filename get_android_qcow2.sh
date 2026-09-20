@@ -29,6 +29,16 @@ else
     exit 1
 fi
 
+FRAMEWORKS_BASE_PATCH=\"${SCRIPTDIR}/patches/lineage-22.1/frameworks_base_dropbox_early_boot_guard.patch\"
+if git -C frameworks/base apply --check \"\$FRAMEWORKS_BASE_PATCH\"; then
+    git -C frameworks/base apply \"\$FRAMEWORKS_BASE_PATCH\"
+elif git -C frameworks/base apply --reverse --check \"\$FRAMEWORKS_BASE_PATCH\"; then
+    echo '[+] Frameworks/base DropBox early-boot guard patch is already applied.'
+else
+    echo '[!] Frameworks/base DropBox early-boot guard patch does not apply cleanly.' >&2
+    exit 1
+fi
+
 sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
 "
