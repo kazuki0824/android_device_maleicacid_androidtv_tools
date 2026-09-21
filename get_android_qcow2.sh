@@ -20,7 +20,7 @@ vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
 
 bash \"${SCRIPTDIR}/patches/lineage-22.1/apply_patches.sh\"
 
-sed -i '/defaults: \\[\\\"maleicacid_tuner_hal2_loom_test_defaults\\\"\\],/d' \\
+sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
 "
 
