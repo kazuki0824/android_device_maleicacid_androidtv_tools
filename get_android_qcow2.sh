@@ -71,7 +71,7 @@ try_patch frameworks/av \
     "frameworks/av Tuner Filter null data source"
 
 try_patch frameworks/base \
-    "\"${SCRIPTDIR}/patches/lineage-22.1/frameworks_base_dropbox_early_boot_guard.patch\"" \
+    \"${SCRIPTDIR}/patches/lineage-22.1/frameworks_base_dropbox_early_boot_guard.patch\" \
     "frameworks/base DropBox early-boot guard"
 
 echo "[+] Patch phase summary:"
