@@ -17,12 +17,12 @@ repo sync -j"$(nproc)" -c --force-remove-dirty --force-sync || true
 bash -lc "
 source build/envsetup.sh
 vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
+"
 
-bash \"${SCRIPTDIR}/patches/lineage-22.1/apply_patches.sh\"
+bash "${SCRIPTDIR}/patches/lineage-22.1/apply_patches.sh"
 
 sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
-"
 
 TUNER_AIDL_UPDATE_API=1 "${SCRIPTDIR}/docker/build_in_docker.sh" "${PRODUCT}"
 "${SCRIPTDIR}/image/verify_px4_in_raw.sh" "${PRODUCT}"
