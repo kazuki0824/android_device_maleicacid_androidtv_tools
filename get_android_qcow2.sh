@@ -29,6 +29,26 @@ else
     exit 1
 fi
 
+TUNER_FRAMEWORKS_BASE_PATCH=vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_base_tuner_filter_null_data_source.patch
+if git -C frameworks/base apply --check \"\$PWD/\$TUNER_FRAMEWORKS_BASE_PATCH\"; then
+    git -C frameworks/base apply \"\$PWD/\$TUNER_FRAMEWORKS_BASE_PATCH\"
+elif git -C frameworks/base apply --reverse --check \"\$PWD/\$TUNER_FRAMEWORKS_BASE_PATCH\"; then
+    echo '[+] Frameworks/base Tuner Filter null data-source patch is already applied.'
+else
+    echo '[!] Frameworks/base Tuner Filter null data-source patch does not apply cleanly.' >&2
+    exit 1
+fi
+
+TUNER_FRAMEWORKS_AV_PATCH=vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_av_tuner_filter_null_data_source.patch
+if git -C frameworks/av apply --check \"\$PWD/\$TUNER_FRAMEWORKS_AV_PATCH\"; then
+    git -C frameworks/av apply \"\$PWD/\$TUNER_FRAMEWORKS_AV_PATCH\"
+elif git -C frameworks/av apply --reverse --check \"\$PWD/\$TUNER_FRAMEWORKS_AV_PATCH\"; then
+    echo '[+] Frameworks/av Tuner Filter null data-source patch is already applied.'
+else
+    echo '[!] Frameworks/av Tuner Filter null data-source patch does not apply cleanly.' >&2
+    exit 1
+fi
+
 FRAMEWORKS_BASE_PATCH=\"${SCRIPTDIR}/patches/lineage-22.1/frameworks_base_dropbox_early_boot_guard.patch\"
 if git -C frameworks/base apply --check \"\$FRAMEWORKS_BASE_PATCH\"; then
     git -C frameworks/base apply \"\$FRAMEWORKS_BASE_PATCH\"
