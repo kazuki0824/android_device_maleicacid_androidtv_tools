@@ -26,10 +26,7 @@ popd >/dev/null
 
 mkdir -p ./ccache
 
-UPDATE_API_CMD=""
-if [[ "${TUNER_AIDL_UPDATE_API:-0}" == "1" ]]; then
-  UPDATE_API_CMD='m android.hardware.tv.tuner-update-api'
-fi
+M_ARGS="-j$(nproc) -k 0"
 
 sudo docker run --rm -it \
   --mount "type=bind,src=$PWD/ccache,dst=/home/builder/.ccache" \
@@ -44,6 +41,8 @@ sudo docker run --rm -it \
 
     set -e
 
-    ${UPDATE_API_CMD}
-    m -j\$(nproc) -k 0 diskimage-vda #otapackage
+    if [[ "${TUNER_AIDL_UPDATE_API:-0}" == "1" ]]; then
+      m ${M_ARGS} android.hardware.tv.tuner-update-api
+    fi
+    m ${M_ARGS} diskimage-vda #otapackage
   "
