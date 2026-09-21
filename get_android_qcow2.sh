@@ -18,47 +18,70 @@ bash -lc "
 source build/envsetup.sh
 vendor/lineage/build/tools/roomservice.py lineage_virtio_x86_64_tv
 
-PATCH=vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_hardware_tv_tuner_nullable_current.patch
-git -C hardware/interfaces/tv/tuner reset --hard
-if git -C hardware/interfaces apply --check \"\$PWD/\$PATCH\"; then
-    git -C hardware/interfaces apply \"\$PWD/\$PATCH\"
-elif git -C hardware/interfaces apply --reverse --check \"\$PWD/\$PATCH\"; then
-    echo '[+] Tuner nullable AIDL source patch is already applied.'
-else
-    echo '[!] Tuner nullable AIDL source patch does not apply cleanly.' >&2
+PATCH_RESULTS=()
+PATCH_FAILURES=()
+
+reset_patch_repo() {
+    local repo="\$1"
+    local label="\$2"
+    if git -C "\$repo" reset --hard; then
+        PATCH_RESULTS+=("RESET    \$label")
+    else
+        PATCH_RESULTS+=("FAILED   reset \$label")
+        PATCH_FAILURES+=("reset \$label (\$repo)")
+    fi
+}
+
+try_patch() {
+    local repo="\$1"
+    local patch="\$2"
+    local label="\$3"
+
+    if git -C "\$repo" apply --check "\$patch"; then
+        if git -C "\$repo" apply "\$patch"; then
+            PATCH_RESULTS+=("APPLIED  \$label")
+        else
+            PATCH_RESULTS+=("FAILED   \$label")
+            PATCH_FAILURES+=("\$label: apply failed after apply --check succeeded")
+        fi
+    elif git -C "\$repo" apply --reverse --check "\$patch"; then
+        PATCH_RESULTS+=("PRESENT  \$label")
+    else
+        PATCH_RESULTS+=("FAILED   \$label")
+        PATCH_FAILURES+=("\$label: neither forward nor reverse dry-run applies")
+    fi
+}
+
+# Start every invocation from the synced repository HEADs. Reset each repository
+# only once so multiple patches targeting the same repository can compose.
+reset_patch_repo hardware/interfaces/tv/tuner "hardware/interfaces/tv/tuner"
+reset_patch_repo frameworks/base "frameworks/base"
+reset_patch_repo frameworks/av "frameworks/av"
+
+try_patch hardware/interfaces/tv/tuner \
+    "\$PWD/vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_hardware_tv_tuner_nullable_current.patch" \
+    "Tuner nullable AIDL source"
+
+try_patch frameworks/base \
+    "\$PWD/vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_base_tuner_filter_null_data_source.patch" \
+    "frameworks/base Tuner Filter null data source"
+
+try_patch frameworks/av \
+    "\$PWD/vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_av_tuner_filter_null_data_source.patch" \
+    "frameworks/av Tuner Filter null data source"
+
+try_patch frameworks/base \
+    "\"${SCRIPTDIR}/patches/lineage-22.1/frameworks_base_dropbox_early_boot_guard.patch\"" \
+    "frameworks/base DropBox early-boot guard"
+
+echo "[+] Patch phase summary:"
+printf "    %s\\n" "\${PATCH_RESULTS[@]}"
+
+if (( \${#PATCH_FAILURES[@]} > 0 )); then
+    echo "[!] Patch phase failed; all patch attempts completed. Failures:" >&2
+    printf "    - %s\\n" "\${PATCH_FAILURES[@]}" >&2
     exit 1
 fi
-
-TUNER_FRAMEWORKS_BASE_PATCH=vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_base_tuner_filter_null_data_source.patch
-if git -C frameworks/base apply --check \"\$PWD/\$TUNER_FRAMEWORKS_BASE_PATCH\"; then
-    git -C frameworks/base apply \"\$PWD/\$TUNER_FRAMEWORKS_BASE_PATCH\"
-elif git -C frameworks/base apply --reverse --check \"\$PWD/\$TUNER_FRAMEWORKS_BASE_PATCH\"; then
-    echo '[+] Frameworks/base Tuner Filter null data-source patch is already applied.'
-else
-    echo '[!] Frameworks/base Tuner Filter null data-source patch does not apply cleanly.' >&2
-    exit 1
-fi
-
-TUNER_FRAMEWORKS_AV_PATCH=vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_av_tuner_filter_null_data_source.patch
-if git -C frameworks/av apply --check \"\$PWD/\$TUNER_FRAMEWORKS_AV_PATCH\"; then
-    git -C frameworks/av apply \"\$PWD/\$TUNER_FRAMEWORKS_AV_PATCH\"
-elif git -C frameworks/av apply --reverse --check \"\$PWD/\$TUNER_FRAMEWORKS_AV_PATCH\"; then
-    echo '[+] Frameworks/av Tuner Filter null data-source patch is already applied.'
-else
-    echo '[!] Frameworks/av Tuner Filter null data-source patch does not apply cleanly.' >&2
-    exit 1
-fi
-
-FRAMEWORKS_BASE_PATCH=\"${SCRIPTDIR}/patches/lineage-22.1/frameworks_base_dropbox_early_boot_guard.patch\"
-if git -C frameworks/base apply --check \"\$FRAMEWORKS_BASE_PATCH\"; then
-    git -C frameworks/base apply \"\$FRAMEWORKS_BASE_PATCH\"
-elif git -C frameworks/base apply --reverse --check \"\$FRAMEWORKS_BASE_PATCH\"; then
-    echo '[+] Frameworks/base DropBox early-boot guard patch is already applied.'
-else
-    echo '[!] Frameworks/base DropBox early-boot guard patch does not apply cleanly.' >&2
-    exit 1
-fi
-
 sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
 "
