@@ -76,7 +76,14 @@ for repo in "${PATCH_REPOS[@]}"; do
     fi
 done
 
+patch_count=${#PATCH_REPOS[@]}
 for i in "${!PATCH_REPOS[@]}"; do
+    printf '[*] Patch %d/%d: %s: %s\n' \
+        "$((i + 1))" \
+        "$patch_count" \
+        "${PATCH_REPOS[$i]}" \
+        "${PATCH_LABELS[$i]}"
+
     try_patch \
         "${PATCH_REPOS[$i]}" \
         "${PATCH_FILES[$i]}" \
