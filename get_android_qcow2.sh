@@ -109,7 +109,7 @@ if (( ${#PATCH_FAILURES[@]} > 0 )); then
     exit 1
 fi
 
-sed -i "/defaults: [\"maleicacid_tuner_hal2_loom_test_defaults\"],/d" \
+sed -i "/defaults: \\[\\\"maleicacid_tuner_hal2_loom_test_defaults\\\"\\],/d" \\
     vendor/maleicacid/tv/tuner_hal2/Android.bp
 '
 
