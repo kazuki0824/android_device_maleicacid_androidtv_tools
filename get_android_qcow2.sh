@@ -14,7 +14,7 @@ command cp -fv "${SCRIPTDIR}"/*.xml .repo/local_manifests/
 repo init -u https://github.com/LineageOS/android.git -b lineage-22.1 --git-lfs
 repo sync -j"$(nproc)" -c --force-remove-dirty --force-sync || true
 
-SCRIPTDIR="${SCRIPTDIR}" bash -lc '
+SCRIPTDIR="${SCRIPTDIR}" bash -lc "$(cat <<'PATCH_PHASE'
 set -euo pipefail
 
 source build/envsetup.sh
@@ -109,9 +109,10 @@ if (( ${#PATCH_FAILURES[@]} > 0 )); then
     exit 1
 fi
 
-sed -i "/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d" \
+sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
-'
+PATCH_PHASE
+)"
 
 TUNER_AIDL_UPDATE_API=1 "${SCRIPTDIR}/docker/build_in_docker.sh" "${PRODUCT}"
 "${SCRIPTDIR}/image/verify_px4_in_raw.sh" "${PRODUCT}"
