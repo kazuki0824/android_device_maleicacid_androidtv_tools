@@ -18,7 +18,7 @@
   <!-- libndk_translation -->
   <project
       path="vendor/google/proprietary/ndk_translation-prebuilt"
-      name="WayDroid-ATV/vendor_google_proprietary_ndk_translation-prebuilt"
+      name="kazuki0824/vendor_google_proprietary_ndk_translation-prebuilt"
       remote="github"
       revision="14arm_15arm64" />
 
