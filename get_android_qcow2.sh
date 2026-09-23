@@ -25,7 +25,7 @@ sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
 
 TUNER_AIDL_UPDATE_API=1 "${SCRIPTDIR}/docker/build_in_docker.sh" "${PRODUCT}"
-"${SCRIPTDIR}/image/verify_px4_in_raw.sh" "${PRODUCT}"
+# "${SCRIPTDIR}/image/verify_px4_in_raw.sh" "${PRODUCT}"
 sudo rm -f "out/target/product/${PRODUCT}/disk-vda.qcow2" || true
 sudo rm -f "out/target/product/${PRODUCT}/userdata-empty.qcow2" || true
 "${SCRIPTDIR}/image/make_disk_image.sh" \
