@@ -41,6 +41,9 @@ sudo docker run --rm -it \
 
     set -e
 
+    echo 'ro.surface_flinger.native_window_buffers_format u:object_r:surfaceflinger_prop:s0 exact int' > device/virt/virt-common/sepolicy/private/property_contexts
+    printf '%s\n' 'allow mediaserver hal_graphics_allocator_default_tmpfs:file {' '    getattr' '    map' '    read' '    write' '};' >> device/virt/virt-common/sepolicy/vendor/mediaserver.te
+    
     if [[ "${TUNER_AIDL_UPDATE_API:-0}" == "1" ]]; then
       m ${M_ARGS} android.hardware.tv.tuner-update-api
     fi
