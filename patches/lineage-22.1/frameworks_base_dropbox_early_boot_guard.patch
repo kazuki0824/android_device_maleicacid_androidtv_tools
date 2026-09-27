@@ -1,0 +1,19 @@
+diff --git a/services/core/java/com/android/server/am/ActivityManagerService.java b/services/core/java/com/android/server/am/ActivityManagerService.java
+--- a/services/core/java/com/android/server/am/ActivityManagerService.java
++++ b/services/core/java/com/android/server/am/ActivityManagerService.java
+@@ -9755,7 +9755,14 @@ public class ActivityManagerService extends IActivityManager.Stub
+         // NOTE -- this must never acquire the ActivityManagerService lock,
+         // otherwise the watchdog may be prevented from resetting the system.
+ 
+-        // Bail early if not published yet
++        // Bail early if not published yet. Do this before getSystemService(), because a missing
++        // service in the system process is reported as a WTF by SystemServiceRegistry. Trying to
++        // record that WTF in DropBox before DropBoxManagerService is published would recursively
++        // generate more WTFs.
++        if (ServiceManager.checkService(Context.DROPBOX_SERVICE) == null) {
++            return;
++        }
++
+         final DropBoxManager dbox;
+         try {
+             dbox = mContext.getSystemService(DropBoxManager.class);
