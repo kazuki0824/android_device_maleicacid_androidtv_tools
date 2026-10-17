@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- HDCP SDK source for the R86S native i915 product. -->
+  <project
+      name="projectceladon/hdcp"
+      path="hardware/intel/external/media/hdcp"
+      remote="github"
+      revision="ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d" />
+</manifest>
