@@ -68,6 +68,11 @@ add_patch \
     "$PATCH_DIR/frameworks_base_dropbox_early_boot_guard.patch" \
     "DropBox early-boot guard"
 
+add_patch \
+    external/drm_hwcomposer \
+    "$PATCH_DIR/drm_hwcomposer_actual_composition_change_count.patch" \
+    "HWC3 actual composition change count"
+
 declare -A RESET_REPOS=()
 for repo in "${PATCH_REPOS[@]}"; do
     if [[ -z "${RESET_REPOS[$repo]+x}" ]]; then
