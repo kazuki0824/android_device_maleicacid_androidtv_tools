@@ -68,6 +68,22 @@ jobs:
             = "c2f82618b17e34cb7fbe1e3ead5b15a6c8b4f812"
           test "$(git -C hardware/intel/external/media/hdcp rev-parse HEAD)" \
             = "ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path("device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv")
+          board = (root / "BoardConfig.mk").read_text()
+          packages = (root / "device.mk").read_text()
+          te = (root / "sepolicy/vendor/hal_drm_widevine.te").read_text()
+          contexts = (root / "sepolicy/vendor/file_contexts").read_text()
+          expression = contexts.splitlines()[0].split()[0]
+          assert re.fullmatch(expression, "/vendor/bin/hw/android.hardware.drm-service.widevine")
+          assert not re.fullmatch(expression, "/vendor/bin/hw/androidXhardware.drm-service.widevine")
+          assert "r86s_virtio_tv/sepolicy/vendor" in board
+          assert "PRODUCT_PACKAGES += libhdcpsdk" not in packages
+          assert "type hdcpd," not in te and "hdcpd_data_file:" not in te
+          print("R86S Widevine policy labels and inactive-HDCP exclusion: OK")
+          PY
       - name: Download pinned public prebuilts and inspect without executing
         shell: bash
         run: bash hdcp/analyze_widevine_elf.sh
