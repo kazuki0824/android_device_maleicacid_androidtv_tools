@@ -139,7 +139,6 @@ int main(int argc, char** argv) {
         return cb->events == 0 && cb->statuses == 0 ? 0 : 11;
     }
     if (mode == "shared") {
-        auto original = make_shared<BlockingCallback>();
         filter.attachSharedFilterCallback(cb);
         auto delivery = async(launch::async, [&] { filter.sendSharedFilterStatus(1); });
         if (!cb->waitEntered()) { cb->unblock(); delivery.wait(); return 12; }
