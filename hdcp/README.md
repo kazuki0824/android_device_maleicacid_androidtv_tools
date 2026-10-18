@@ -8,7 +8,7 @@ owns product-specific package selection. No post-sync edits to another repositor
 ## Integration
 
 When `ANDROID_PRODUCT=r86s_virtio_tv`, `get_android_qcow2.sh` copies
-`hdcp/93-hdcp.xml` into `.repo/local_manifests` before `repo sync`.
+`hdcp/93-hdcp.xml` as `.repo/local_manifests/zz-hdcp.xml` before\n`repo sync`. Its local filename is deliberately sorted after\n`virtio_x86_64_tv_grub.xml` so `extend-project` can find the project.
 The manifest pins Celadon's Android 15 HDCP SDK sources at
 `ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d`.
 For the R86S build, the same manifest uses `extend-project` to pin the

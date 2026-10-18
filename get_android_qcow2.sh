@@ -13,9 +13,12 @@ mkdir -p .repo/local_manifests/
 command cp -fv "${SCRIPTDIR}"/*.xml .repo/local_manifests/
 # R86S-only source acquisition. Product packaging is declared in the device tree.
 if [[ "${PRODUCT}" == "r86s_virtio_tv" ]]; then
-  cp -fv "${SCRIPTDIR}/hdcp/93-hdcp.xml" .repo/local_manifests/93-hdcp.xml
-else
+  # Repo parses local manifests by filename. The extension must follow
+  # virtio_x86_64_tv_grub.xml, which defines the project being extended.
   rm -f .repo/local_manifests/93-hdcp.xml
+  cp -fv "${SCRIPTDIR}/hdcp/93-hdcp.xml" .repo/local_manifests/zz-hdcp.xml
+else
+  rm -f .repo/local_manifests/93-hdcp.xml .repo/local_manifests/zz-hdcp.xml
 fi
 repo init -u https://github.com/LineageOS/android.git -b lineage-22.1 --git-lfs
 repo sync -j"$(nproc)" -c --force-remove-dirty

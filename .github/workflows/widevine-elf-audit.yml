@@ -48,7 +48,7 @@ jobs:
           "$RUNNER_TEMP/repo" init -u https://github.com/LineageOS/android.git -b lineage-22.1
           mkdir -p .repo/local_manifests
           cp "$GITHUB_WORKSPACE"/*.xml .repo/local_manifests/
-          cp "$GITHUB_WORKSPACE"/hdcp/93-hdcp.xml .repo/local_manifests/93-hdcp.xml
+          cp "$GITHUB_WORKSPACE"/hdcp/93-hdcp.xml .repo/local_manifests/zz-hdcp.xml
           "$RUNNER_TEMP/repo" manifest -o manifest-resolved.xml
           python3 - <<'PY'
           import xml.etree.ElementTree as ET
