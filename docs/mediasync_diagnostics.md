@@ -7,13 +7,14 @@ TISのAPKを更新するだけでは、この実装への診断追加は反映�
 ## このビルドで取り込む変更
 
 `91-tv_component.xml`は、再生修正・診断・採取スクリプトを含む
-tv PR #209の`60fbe4cb24fd54dcdef0375f9f7e102463962cce`に固定する。
+tv PR #209の`35b44afed0a49a016101d2738920d46c2e6d88a6`に固定する。
 従来参照したPR #116の先端ではなく、その上にある#206・#207・#209の
 変更を含む確認構成である。診断パッチだけを取得する変更ではない。
 
 `get_android_qcow2.sh`の通常実行で、同期後の既存パッチ適用一覧から
-`tis/platform_patches/lineage-22.1/frameworks_av_mediasync_diagnostics.patch`
-を`frameworks/av`へ適用する。パッチ本体はtv側を正本とし、ここへ複製しない。
+`patches/lineage-22.1/frameworks_av_mediasync_diagnostics.patch`
+を`frameworks/av`へ適用する。パッチ本体はこのtoolsリポジトリだけで管理する。
+`tv`へ誤って追加した診断patchと手動適用手順はrevertする。
 同期失敗やパッチ欠落・適用失敗時は、未反映のまま製品ビルドへ進まない。
 
 既存の適用スクリプトは対象リポジトリを`git reset --hard`する。
@@ -38,9 +39,11 @@ Exact-mode用のJava/JNI/private listenerパッチは追加しない。
 
 パッチがあってもqueue成功は画面表示成功ではない。最終表示の判定には
 SurfaceFlingerの記録と外部撮影が必要で、採取欠落時は断定しない。
-採取コマンド・成立条件は[tvの統合手順](https://github.com/kazuki0824/tv/blob/60fbe4cb24fd54dcdef0375f9f7e102463962cce/tis/INTEGRATION.md#黒画面停止不能旧映像の診断採取)
+採取コマンド・成立条件は[tvの統合手順](https://github.com/kazuki0824/tv/blob/35b44afed0a49a016101d2738920d46c2e6d88a6/tis/INTEGRATION.md#黒画面停止不能旧映像の診断採取)
 を正本とする。ビルドrevision・Framework差分・fingerprintと同じビルドの
-symbolsも保持する。
+symbolsも保持する。対象ABIのlibstagefrightとTISを両方更新し、既存Exact patchを
+使う場合はその適用状態も記録する。採取scriptの`host-tv-revision.txt`はホスト
+checkoutの記録であり、端末APKのrevision証明ではない。
 
 ## 確認範囲
 

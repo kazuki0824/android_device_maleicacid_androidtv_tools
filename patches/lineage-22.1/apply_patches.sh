@@ -65,7 +65,7 @@ add_patch \
 
 add_patch \
     frameworks/av \
-    "$ANDROID_BUILD_TOP/vendor/maleicacid/tv/tis/platform_patches/lineage-22.1/frameworks_av_mediasync_diagnostics.patch" \
+    "$PATCH_DIR/frameworks_av_mediasync_diagnostics.patch" \
     "MediaSync playback diagnostics"
 
 add_patch \
