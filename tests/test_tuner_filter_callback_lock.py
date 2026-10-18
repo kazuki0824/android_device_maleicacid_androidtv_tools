@@ -47,11 +47,13 @@ def extract_method(source, name):
 HARNESS_PREFIX = r"""
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 using namespace std;
 using namespace std::chrono_literals;
@@ -139,15 +141,19 @@ int main(int argc, char** argv) {
         return cb->events == 0 && cb->statuses == 0 ? 0 : 11;
     }
     if (mode == "shared") {
-        filter.attachSharedFilterCallback(cb);
-        auto delivery = async(launch::async, [&] { filter.sendSharedFilterStatus(1); });
+        auto original = make_shared<BlockingCallback>();
+        TunerFilter::FilterCallback sharedFilter(original);
+        sharedFilter.attachSharedFilterCallback(cb);
+        auto delivery = async(launch::async, [&] { sharedFilter.sendSharedFilterStatus(1); });
         if (!cb->waitEntered()) { cb->unblock(); delivery.wait(); return 12; }
-        auto detach = async(launch::async, [&] { filter.detachSharedFilterCallback(); });
+        auto detach = async(launch::async, [&] { sharedFilter.detachSharedFilterCallback(); });
         const bool completed = detach.wait_for(500ms) == future_status::ready;
         cb->unblock();
         delivery.wait();
         detach.wait();
-        return completed && cb->statuses == 1 ? 0 : 13;
+        original->unblock();
+        sharedFilter.onFilterStatus(DemuxFilterStatus::OK);
+        return completed && cb->statuses == 1 && original->statuses == 1 ? 0 : 13;
     }
     if (mode != "event" && mode != "status") return 14;
     auto delivery = async(launch::async, [&] {
