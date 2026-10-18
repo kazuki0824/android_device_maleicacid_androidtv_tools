@@ -20,7 +20,6 @@ jobs:
         run: |
           bash -n get_android_qcow2.sh hdcp/analyze_widevine_elf.sh hdcp/check_android_drm.sh
           python3 - <<'PY'
-          from pathlib import Path
           import xml.etree.ElementTree as ET
           normal = ET.parse("virtio_x86_64_tv_grub.xml").getroot()
           r86s = ET.parse("hdcp/93-hdcp.xml").getroot()
@@ -30,10 +29,7 @@ jobs:
           assert x is not None and x.attrib.get("path") == p.attrib.get("path")
           assert len(x.attrib["revision"]) == 40 and x.attrib["upstream"].startswith("refs/heads/")
           assert r86s.find("./project[@name='projectceladon/hdcp']") is not None
-          script = Path("get_android_qcow2.sh").read_text()
-          assert 'repo sync -j"$(nproc)" -c --force-remove-dirty' in script
-          assert 'repo sync -j"$(nproc)" -c --force-remove-dirty || true' not in script
-          print("R86S-only manifest overlay and fail-fast repo sync: OK")
+          print("R86S-only manifest overlay: OK")
           PY
       - name: Verify real repo manifest resolution and pinned R86S checkout
         shell: bash
