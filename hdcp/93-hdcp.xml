@@ -11,6 +11,6 @@
   <extend-project
       name="kazuki0824/virtio_x86_64_tv_grub"
       path="device/maleicacid/virtio_x86_64_tv_grub"
-      revision="7eb6c8903e927d159a582a545e2518d8e5b1f5c9"
+      revision="c2f82618b17e34cb7fbe1e3ead5b15a6c8b4f812"
       upstream="refs/heads/feature/r86s-hdcp-declarative-integration" />
 </manifest>
