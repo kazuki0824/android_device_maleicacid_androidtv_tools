@@ -4,7 +4,7 @@
       name="kazuki0824/tv"
       path="vendor/maleicacid/tv"
       remote="github"
-      revision="fix/tis-scan-one-shot-close-and-restart-diagnostics-on-207" />
+      revision="fix/tis-remove-unused-diagnostic-state" />
   <project
       name="kazuki0824/libaribcaption-android"
       path="vendor/maleicacid/libaribcaption"

@@ -31,7 +31,7 @@ TISの取得revisionは`91-tv_component.xml`を参照する。
 
 パッチがあってもqueue成功は画面表示成功ではない。最終表示の判定には
 SurfaceFlingerの記録と外部撮影が必要で、採取欠落時は断定しない。
-採取コマンド・成立条件は[tvの統合手順](https://github.com/kazuki0824/tv/blob/fix/tis-scan-one-shot-close-and-restart-diagnostics-on-207/tis/INTEGRATION.md#黒画面停止不能旧映像の診断採取)
+採取コマンド・成立条件は[tvの統合手順](https://github.com/kazuki0824/tv/blob/fix/tis-remove-unused-diagnostic-state/tis/INTEGRATION.md#黒画面停止不能旧映像の診断採取)
 を正本とする。ビルドrevision・Framework差分・fingerprintと同じビルドの
 symbolsも保持する。対象ABIのlibstagefrightとTISを両方更新し、既存Exact patchを
 使う場合はその適用状態も記録する。採取scriptの`host-tv-revision.txt`はホスト
