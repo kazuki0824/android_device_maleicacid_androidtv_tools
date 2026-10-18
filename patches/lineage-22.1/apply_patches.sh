@@ -64,6 +64,11 @@ add_patch \
     "Tuner Filter null data source"
 
 add_patch \
+    frameworks/av \
+    "$ANDROID_BUILD_TOP/vendor/maleicacid/tv/tis/platform_patches/lineage-22.1/frameworks_av_mediasync_diagnostics.patch" \
+    "MediaSync playback diagnostics"
+
+add_patch \
     frameworks/base \
     "$PATCH_DIR/frameworks_base_dropbox_early_boot_guard.patch" \
     "DropBox early-boot guard"
