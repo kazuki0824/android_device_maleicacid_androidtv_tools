@@ -64,6 +64,11 @@ add_patch \
     "Tuner Filter null data source"
 
 add_patch \
+    frameworks/av \
+    "$PATCH_DIR/frameworks_av_tuner_filter_callback_lock.patch" \
+    "Tuner Filter callback lock deadlock"
+
+add_patch \
     frameworks/base \
     "$PATCH_DIR/frameworks_base_dropbox_early_boot_guard.patch" \
     "DropBox early-boot guard"
