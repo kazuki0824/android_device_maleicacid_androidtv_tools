@@ -4,29 +4,21 @@
 `frameworks/av/media/libstagefright/MediaSync.cpp`のnative MediaSyncも含む。
 TISのAPKを更新するだけでは、この実装への診断追加は反映されない。
 
-## このビルドで取り込む変更
+## ビルドと導入
 
-`91-tv_component.xml`は、再生修正・診断・採取スクリプトを含む
-tv PR #209の`35b44afed0a49a016101d2738920d46c2e6d88a6`に固定する。
-従来参照したPR #116の先端ではなく、その上にある#206・#207・#209の
-変更を含む確認構成である。診断パッチだけを取得する変更ではない。
+`get_android_qcow2.sh`を実行すると、`patches/lineage-22.1/apply_patches.sh`が
+同ディレクトリの`frameworks_av_mediasync_diagnostics.patch`を
+`frameworks/av`へ適用する。手動での事前適用は不要。
+既存スクリプトは対象リポジトリを`git reset --hard`してから適用するため、
+対象treeに保存していない変更がある場合は先に退避する。
 
-`get_android_qcow2.sh`の通常実行で、同期後の既存パッチ適用一覧から
-`patches/lineage-22.1/frameworks_av_mediasync_diagnostics.patch`
-を`frameworks/av`へ適用する。パッチ本体はこのtoolsリポジトリだけで管理する。
-`tv`へ誤って追加した診断patchと手動適用手順はrevertする。
-同期失敗やパッチ欠落・適用失敗時は、未反映のまま製品ビルドへ進まない。
+TISの取得revisionは`91-tv_component.xml`を参照する。
+`diskimage-vda`の生成後、通常のimage導入手順で対象ABIの
+`libstagefright`とTISを両方更新する。
+`m libstagefright MaleicacidTvInput`だけの成功は端末導入完了を意味しない。
 
-既存の適用スクリプトは対象リポジトリを`git reset --hard`する。
-そのため実行前に手で当てたパッチは消える。今回の一覧登録により、
-reset後に診断パッチを適用し直す。作業中の変更があるAndroid treeでは
-この既存の破壊的処理に注意する。
-
-既存の`diskimage-vda`製品ビルドで、変更した`libstagefright`とTISを含む
-imageを生成し、通常のimage導入手順で両方を更新する。
-`m libstagefright MaleicacidTvInput`だけの成功は、端末導入完了を意味しない。
-Exact-mode用のJava/JNI/private listenerパッチは追加しない。
-診断出力は採取時の`log.tag.MediaSync=DEBUG`で有効になり、常時DEBUGにはしない。
+診断出力は採取時の`log.tag.MediaSync=DEBUG`で有効になる。
+採取操作は下記のTIS統合手順に従う。
 
 ## 診断パッチがない場合の違い
 

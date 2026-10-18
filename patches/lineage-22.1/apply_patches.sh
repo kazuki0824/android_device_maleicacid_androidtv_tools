@@ -63,6 +63,7 @@ add_patch \
     "$ANDROID_BUILD_TOP/vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_av_tuner_filter_null_data_source.patch" \
     "Tuner Filter null data source"
 
+# Build/collection requirements: ../../docs/mediasync_diagnostics.md
 add_patch \
     frameworks/av \
     "$PATCH_DIR/frameworks_av_mediasync_diagnostics.patch" \
