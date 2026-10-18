@@ -1,0 +1,20 @@
+name: Widevine ELF dependency audit
+
+on:
+  push:
+    branches:
+      - feature/r86s-hdcp-over-pr12
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-widevine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned public prebuilts and inspect without executing
+        shell: bash
+        run: bash hdcp/analyze_widevine_elf.sh
