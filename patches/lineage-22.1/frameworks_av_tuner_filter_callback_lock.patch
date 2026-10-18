@@ -1,10 +1,10 @@
 diff --git a/services/tuner/TunerFilter.cpp b/services/tuner/TunerFilter.cpp
 --- a/services/tuner/TunerFilter.cpp
 +++ b/services/tuner/TunerFilter.cpp
-@@ -334,29 +334,44 @@
+@@ -334,30 +334,45 @@
+ }
  
  /////////////// FilterCallback ///////////////////////
- 
 -::ndk::ScopedAStatus TunerFilter::FilterCallback::onFilterStatus(DemuxFilterStatus status) {
 -    Mutex::Autolock _l(mCallbackLock);
 -    if (mTunerFilterCallback != nullptr) {
@@ -28,6 +28,7 @@ diff --git a/services/tuner/TunerFilter.cpp b/services/tuner/TunerFilter.cpp
 -        mTunerFilterCallback->onFilterStatus(static_cast<DemuxFilterStatus>(status));
 -    }
 -}
+-
 +::ndk::ScopedAStatus TunerFilter::FilterCallback::onFilterStatus(DemuxFilterStatus status) {
 +    shared_ptr<ITunerFilterCallback> callback;
 +    {
@@ -66,6 +67,7 @@ diff --git a/services/tuner/TunerFilter.cpp b/services/tuner/TunerFilter.cpp
 +        callback->onFilterStatus(static_cast<DemuxFilterStatus>(status));
 +    }
 +}
++
  void TunerFilter::FilterCallback::attachSharedFilterCallback(
          const shared_ptr<ITunerFilterCallback>& in_cb) {
      Mutex::Autolock _l(mCallbackLock);
