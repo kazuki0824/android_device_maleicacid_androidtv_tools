@@ -18,7 +18,7 @@ else
   rm -f .repo/local_manifests/93-hdcp.xml
 fi
 repo init -u https://github.com/LineageOS/android.git -b lineage-22.1 --git-lfs
-repo sync -j"$(nproc)" -c --force-remove-dirty || true
+repo sync -j"$(nproc)" -c --force-remove-dirty
 
 bash -lc "
 source build/envsetup.sh

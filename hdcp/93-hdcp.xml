@@ -6,4 +6,11 @@
       path="hardware/intel/external/media/hdcp"
       remote="github"
       revision="ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d" />
+  <!-- Include the unmerged product configuration only for the R86S build.
+       The upstream ref helps repo sync -c locate this pinned commit. -->
+  <extend-project
+      name="kazuki0824/virtio_x86_64_tv_grub"
+      path="device/maleicacid/virtio_x86_64_tv_grub"
+      revision="7eb6c8903e927d159a582a545e2518d8e5b1f5c9"
+      upstream="refs/heads/feature/r86s-hdcp-declarative-integration" />
 </manifest>
