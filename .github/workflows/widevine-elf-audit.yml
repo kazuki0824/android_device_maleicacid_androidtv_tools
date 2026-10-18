@@ -12,7 +12,7 @@ permissions:
 jobs:
   inspect-widevine:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - name: Verify manifest and build-script contract
@@ -35,6 +35,39 @@ jobs:
           assert 'repo sync -j"$(nproc)" -c --force-remove-dirty || true' not in script
           print("R86S-only manifest overlay and fail-fast repo sync: OK")
           PY
+      - name: Verify real repo manifest resolution and pinned R86S checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$RUNNER_TEMP/repo"
+          chmod +x "$RUNNER_TEMP/repo"
+          mkdir -p "$RUNNER_TEMP/r86s-repo-smoke"
+          cd "$RUNNER_TEMP/r86s-repo-smoke"
+          "$RUNNER_TEMP/repo" init -u https://github.com/LineageOS/android.git -b lineage-22.1
+          mkdir -p .repo/local_manifests
+          cp "$GITHUB_WORKSPACE"/*.xml .repo/local_manifests/
+          cp "$GITHUB_WORKSPACE"/hdcp/93-hdcp.xml .repo/local_manifests/93-hdcp.xml
+          "$RUNNER_TEMP/repo" manifest -o manifest-resolved.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = ET.parse("manifest-resolved.xml").getroot()
+          project = root.find("./project[@path='device/maleicacid/virtio_x86_64_tv_grub']")
+          hdcp = root.find("./project[@path='hardware/intel/external/media/hdcp']")
+          assert project is not None, "R86S project missing"
+          assert project.get("revision") == "c2f82618b17e34cb7fbe1e3ead5b15a6c8b4f812"
+          assert hdcp is not None, "Celadon HDCP source missing"
+          print("Merged manifest points to the intended R86S product PR head")
+          PY
+          "$RUNNER_TEMP/repo" sync -j2 -c \
+            device/maleicacid/virtio_x86_64_tv_grub \
+            hardware/intel/external/media/hdcp
+          test "$(git -C device/maleicacid/virtio_x86_64_tv_grub rev-parse HEAD)" \
+            = "c2f82618b17e34cb7fbe1e3ead5b15a6c8b4f812"
+          test "$(git -C hardware/intel/external/media/hdcp rev-parse HEAD)" \
+            = "ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d"
       - name: Download pinned public prebuilts and inspect without executing
         shell: bash
         run: bash hdcp/analyze_widevine_elf.sh
