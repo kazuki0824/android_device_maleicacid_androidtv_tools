@@ -1,0 +1,85 @@
+name: Widevine ELF dependency audit
+
+on:
+  push:
+    branches:
+      - feature/r86s-hdcp-over-pr12
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-widevine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify manifest and build-script contract
+        shell: bash
+        run: |
+          bash -n get_android_qcow2.sh hdcp/analyze_widevine_elf.sh hdcp/check_android_drm.sh
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          normal = ET.parse("virtio_x86_64_tv_grub.xml").getroot()
+          r86s = ET.parse("hdcp/93-hdcp.xml").getroot()
+          p = normal.find("./project[@name='kazuki0824/virtio_x86_64_tv_grub']")
+          x = r86s.find("./extend-project[@name='kazuki0824/virtio_x86_64_tv_grub']")
+          assert p is not None and p.attrib.get("revision") == "main"
+          assert x is not None and x.attrib.get("path") == p.attrib.get("path")
+          assert len(x.attrib["revision"]) == 40 and x.attrib["upstream"].startswith("refs/heads/")
+          assert r86s.find("./project[@name='projectceladon/hdcp']") is not None
+          print("R86S-only manifest overlay: OK")
+          PY
+      - name: Verify real repo manifest resolution and pinned R86S checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$RUNNER_TEMP/repo"
+          chmod +x "$RUNNER_TEMP/repo"
+          mkdir -p "$RUNNER_TEMP/r86s-repo-smoke"
+          cd "$RUNNER_TEMP/r86s-repo-smoke"
+          "$RUNNER_TEMP/repo" init -u https://github.com/LineageOS/android.git -b lineage-22.1
+          mkdir -p .repo/local_manifests
+          cp "$GITHUB_WORKSPACE"/*.xml .repo/local_manifests/
+          cp "$GITHUB_WORKSPACE"/hdcp/93-hdcp.xml .repo/local_manifests/zz-hdcp.xml
+          "$RUNNER_TEMP/repo" manifest -o manifest-resolved.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = ET.parse("manifest-resolved.xml").getroot()
+          project = root.find("./project[@path='device/maleicacid/virtio_x86_64_tv_grub']")
+          hdcp = root.find("./project[@path='hardware/intel/external/media/hdcp']")
+          assert project is not None, "R86S project missing"
+          assert project.get("revision") == "c2f82618b17e34cb7fbe1e3ead5b15a6c8b4f812"
+          assert hdcp is not None, "Celadon HDCP source missing"
+          print("Merged manifest points to the intended R86S product PR head")
+          PY
+          "$RUNNER_TEMP/repo" sync -j2 -c \
+            device/maleicacid/virtio_x86_64_tv_grub \
+            hardware/intel/external/media/hdcp
+          test "$(git -C device/maleicacid/virtio_x86_64_tv_grub rev-parse HEAD)" \
+            = "c2f82618b17e34cb7fbe1e3ead5b15a6c8b4f812"
+          test "$(git -C hardware/intel/external/media/hdcp rev-parse HEAD)" \
+            = "ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path("device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv")
+          board = (root / "BoardConfig.mk").read_text()
+          packages = (root / "device.mk").read_text()
+          te = (root / "sepolicy/vendor/hal_drm_widevine.te").read_text()
+          contexts = (root / "sepolicy/vendor/file_contexts").read_text()
+          expression = contexts.splitlines()[0].split()[0]
+          assert re.fullmatch(expression, "/vendor/bin/hw/android.hardware.drm-service.widevine")
+          assert not re.fullmatch(expression, "/vendor/bin/hw/androidXhardware.drm-service.widevine")
+          assert "r86s_virtio_tv/sepolicy/vendor" in board
+          assert "PRODUCT_PACKAGES += libhdcpsdk" not in packages
+          assert "type hdcpd," not in te and "hdcpd_data_file:" not in te
+          print("R86S Widevine policy labels and inactive-HDCP exclusion: OK")
+          PY
+      - name: Download pinned public prebuilts and inspect without executing
+        shell: bash
+        run: bash hdcp/analyze_widevine_elf.sh
