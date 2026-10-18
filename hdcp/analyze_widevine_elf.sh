@@ -25,5 +25,21 @@ for binary in android.hardware.drm-service.widevine libwvaidl.so; do
   strings -a "$binary" |
     grep -Ei 'hdcp|hwc\.info|\.sdk_socket|/data/vendor/hdcp|libhdcp' |
     head -80 || true
+  echo "--- IPC and dynamic symbol imports ---"
+  readelf --dyn-syms -W "$binary" |
+    grep -Ei ' UND .*(dlopen|dlsym|android_dlopen_ext|socket|connect|AServiceManager_|AIBinder_|ioctl)' |
+    head -60 || true
+  echo "--- Exact daemon/library/socket references (ASCII and UTF-16LE) ---"
+  for token in 'libhdcpsdk' 'libhwcservice' 'hdcpd' 'hwc.info' '.sdk_socket' '/data/vendor/hdcp'; do
+    ascii='absent'
+    utf16='absent'
+    if LC_ALL=C grep -aFq "$token" "$binary"; then ascii='present'; fi
+    if strings -el "$binary" | grep -Fq "$token"; then utf16='present'; fi
+    printf '%s: ascii=%s utf16le=%s\\n' "$token" "$ascii" "$utf16"
+  done
+  echo "--- Candidate dynamically loaded library paths (deduplicated) ---"
+  strings -a "$binary" |
+    grep -Eio '[A-Za-z0-9_./+-]*lib[A-Za-z0-9_.+-]+\\.so([.0-9]+)?' |
+    sort -u | head -80 || true
   echo "::endgroup::"
 done
