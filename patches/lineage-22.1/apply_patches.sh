@@ -59,6 +59,11 @@ add_patch \
     "Tuner Filter null data source"
 
 add_patch \
+    frameworks/base \
+    "$PATCH_DIR/frameworks_base_tuner_jni_noinit_metadata.patch" \
+    "Tuner JNI valid noinit media metadata"
+
+add_patch \
     frameworks/av \
     "$ANDROID_BUILD_TOP/vendor/maleicacid/tv/tuner_hal2/platform_patches/lineage-22.1/android_frameworks_av_tuner_filter_null_data_source.patch" \
     "Tuner Filter null data source"

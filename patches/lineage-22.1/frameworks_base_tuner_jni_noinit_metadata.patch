@@ -1,0 +1,13 @@
+diff --git a/media/jni/android_media_tv_Tuner.cpp b/media/jni/android_media_tv_Tuner.cpp
+--- a/media/jni/android_media_tv_Tuner.cpp
++++ b/media/jni/android_media_tv_Tuner.cpp
+@@ -657,7 +657,9 @@ void FilterClientCallbackImpl::getMediaEvent(const jobjectArray& arr, const int size,
+                     presentationsJObj.get());
+             break;
+         }
++        case DemuxFilterMediaEventExtraMetaData::Tag::noinit:
++            break;
+         default: {
+             ALOGE("FilterClientCallbackImpl::getMediaEvent: unknown extraMetaData");
+             break;
+         }
