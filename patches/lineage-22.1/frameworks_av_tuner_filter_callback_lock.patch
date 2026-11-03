@@ -1,0 +1,73 @@
+diff --git a/services/tuner/TunerFilter.cpp b/services/tuner/TunerFilter.cpp
+--- a/services/tuner/TunerFilter.cpp
++++ b/services/tuner/TunerFilter.cpp
+@@ -334,30 +334,45 @@
+ }
+ 
+ /////////////// FilterCallback ///////////////////////
+-::ndk::ScopedAStatus TunerFilter::FilterCallback::onFilterStatus(DemuxFilterStatus status) {
+-    Mutex::Autolock _l(mCallbackLock);
+-    if (mTunerFilterCallback != nullptr) {
+-        mTunerFilterCallback->onFilterStatus(status);
+-    }
+-    return ::ndk::ScopedAStatus::ok();
+-}
+-
+-::ndk::ScopedAStatus TunerFilter::FilterCallback::onFilterEvent(
+-        const vector<DemuxFilterEvent>& events) {
+-    Mutex::Autolock _l(mCallbackLock);
+-    if (mTunerFilterCallback != nullptr) {
+-        mTunerFilterCallback->onFilterEvent(events);
+-    }
+-    return ::ndk::ScopedAStatus::ok();
+-}
+-
+-void TunerFilter::FilterCallback::sendSharedFilterStatus(int32_t status) {
+-    Mutex::Autolock _l(mCallbackLock);
+-    if (mTunerFilterCallback != nullptr && mOriginalCallback != nullptr) {
+-        mTunerFilterCallback->onFilterStatus(static_cast<DemuxFilterStatus>(status));
+-    }
+-}
+-
++::ndk::ScopedAStatus TunerFilter::FilterCallback::onFilterStatus(DemuxFilterStatus status) {
++    shared_ptr<ITunerFilterCallback> callback;
++    {
++        Mutex::Autolock _l(mCallbackLock);
++        callback = mTunerFilterCallback;
++    }
++    // Binder callbacks are synchronous; never hold the callback lock across IPC.
++    if (callback != nullptr) {
++        callback->onFilterStatus(status);
++    }
++    return ::ndk::ScopedAStatus::ok();
++}
++
++::ndk::ScopedAStatus TunerFilter::FilterCallback::onFilterEvent(
++        const vector<DemuxFilterEvent>& events) {
++    shared_ptr<ITunerFilterCallback> callback;
++    {
++        Mutex::Autolock _l(mCallbackLock);
++        callback = mTunerFilterCallback;
++    }
++    if (callback != nullptr) {
++        callback->onFilterEvent(events);
++    }
++    return ::ndk::ScopedAStatus::ok();
++}
++
++void TunerFilter::FilterCallback::sendSharedFilterStatus(int32_t status) {
++    shared_ptr<ITunerFilterCallback> callback;
++    {
++        Mutex::Autolock _l(mCallbackLock);
++        if (mOriginalCallback != nullptr) {
++            callback = mTunerFilterCallback;
++        }
++    }
++    if (callback != nullptr) {
++        callback->onFilterStatus(static_cast<DemuxFilterStatus>(status));
++    }
++}
++
+ void TunerFilter::FilterCallback::attachSharedFilterCallback(
+         const shared_ptr<ITunerFilterCallback>& in_cb) {
+     Mutex::Autolock _l(mCallbackLock);
