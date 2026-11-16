@@ -55,7 +55,7 @@ tools_head="$(git ls-remote "$tools_repo" "$tools_branch" | awk '{print $1}')"
 if [[ ! "$tools_head" =~ ^[0-9a-f]{40}$ ]]; then
   echo "UNVERIFIED: could not resolve product PR #15 revision" >&2; exit 3
 fi
-patch_url="https://raw.githubusercontent.com/kazuki0824/android_device_maleicacid_androidtv_tools/\${tools_head}/patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch"
+patch_url="https://raw.githubusercontent.com/kazuki0824/android_device_maleicacid_androidtv_tools/${tools_head}/patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch"
 curl -fsSL --retry 3 "$patch_url" -o out/hdcp-validation/product-i915-hdcp.patch
 sha256sum out/hdcp-validation/product-i915-hdcp.patch > out/hdcp-validation/product-patch.sha256
 # Exact reverse-application is a stronger source-level check than string
