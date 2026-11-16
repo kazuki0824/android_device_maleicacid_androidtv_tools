@@ -68,14 +68,30 @@ m -j4 vendor_sepolicy.cil \
   2>&1 | tee "$logdir/03-vendor-sepolicy.log"
 m -j4 check-vintf-all \
   2>&1 | tee "$logdir/04-vintf.log"
-# Separate build correctness from installation, which is target-dependent.
+# Separate input prebuilts, installed files and final image contents.
+# Soong target success does not imply an updated vendor image.
 product_out="out/target/product/r86s_virtio_tv"
-if [[ -d "$product_out" ]]; then
-  # No claims about image presence: record any actual matching files.
-  find "$product_out" -type f \( -name 'libwvaidl.so' -o -name 'android.hardware.drm-service.widevine' \) -print0 |
-    xargs -0 -r sha256sum > "$logdir/image-binary-hashes.sha256"
+install_dir="$product_out/vendor"
+installed_report="$logdir/installed-vendor-binaries.sha256"
+image_report="$logdir/final-vendor-image-evidence.txt"
+: > "$installed_report"
+: > "$image_report"
+for entry in "bin/hw/android.hardware.drm-service.widevine" "lib64/libwvaidl.so"; do
+  installed="$install_dir/$entry"
+  if [[ -f "$installed" ]]; then
+    sha256sum "$installed" >> "$installed_report"
+  else
+    printf 'UNVERIFIED: installed file absent: %s\n' "$installed" | tee -a "$image_report"
+  fi
+done
+if [[ -f "$product_out/vendor.img" ]]; then
+  printf 'Final vendor image present: %s\n' "$product_out/vendor.img" >> "$image_report"
+  sha256sum "$product_out/vendor.img" >> "$image_report"
+  # A whole-image hash alone does NOT prove that the two named files exist
+  # inside it. Extract/inspect filesystem contents separately.
+  printf 'UNVERIFIED: image member contents not inspected; vendor.img hash is not per-file evidence\n' >> "$image_report"
 else
-  echo "Product output directory not yet present: $product_out" > "$logdir/image-binary-hashes.sha256"
+  printf 'UNVERIFIED: final vendor.img was not built by these targeted Soong jobs\n' >> "$image_report"
 fi
 echo "PASS: targeted Soong, vendor SELinux and VINTF build targets."
-echo "NOT PROVEN: fully flashed/installed image, L3 provisioning or HDMI HDCP."
+echo "UNVERIFIED: final vendor image member contents, L3 provisioning and HDMI HDCP."
