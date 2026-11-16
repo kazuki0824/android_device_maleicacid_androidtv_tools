@@ -45,6 +45,37 @@ unloads a device. Distinguish host support from the Android guest's actual
 access to i915/MEI and its physical HDMI connector. No result has been
 collected from the R86S yet.
 
+## Resolved source-built Linux 6.6 Kconfig evidence
+
+[Actual Kbuild CI run 43912969979](https://github.com/kazuki0824/android_device_maleicacid_androidtv_tools/actions/runs/43912969979)
+checked out kernel source `4d42ee3d41c6b29318f723a7f718b864e3d7324f`
+and device commit `2b152fd5242075b9ca7730b2256eb7eb5aff1554`.
+It invoked the kernel's real Kconfig targets in Lineage build order, including
+the product-owned fragment, then examined the **resolved** `.config`:
+
+- `CONFIG_DRM=y`
+- `CONFIG_DRM_I915=m`
+- `CONFIG_INTEL_MEI=m`
+- `CONFIG_INTEL_MEI_ME=m`
+- `CONFIG_INTEL_MEI_HDCP=m`
+
+The same run validated the source Makefile targets for `mei.ko`,
+`mei-me.ko`, `mei_hdcp.ko` and `i915.ko`, plus LineageOS's module
+installation/packaging recipe. Device #10 also declares the four modules in
+`BOARD_VENDOR_KERNEL_MODULES_LOAD`.
+
+In the **normal roomservice dependency chain**, `device/virt/virt-common`'s
+`lineage.dependencies` fetches `android_kernel_virt_virtio` into
+`kernel/virt/virtio`; with that source present, LineageOS prefers its
+source-build path. The prebuilt fallback only applies when the kernel source
+is missing or a build explicitly overrides source selection.
+
+**Proven:** source Kconfig resolves exactly as required and module build/load
+rules are wired in. **Not yet proven:** full kernel/module compilation,
+generated vendor_dlkm image, real boot/module binding, Intel MEI firmware
+availability or negotiated HDCP. The generated resolved Kconfig is published
+as a CI artifact; do not confuse that with the config of a running device.
+
 ## R86S product kernel fragment (device #10)
 
 The product's [device PR #10](https://github.com/kazuki0824/virtio_x86_64_tv_grub/pull/10)
