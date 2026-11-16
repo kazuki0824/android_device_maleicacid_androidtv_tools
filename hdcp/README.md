@@ -134,6 +134,25 @@ not committed as a build workaround into temporary PR #22.
 The i915/HDCP patch in tools #15 does not compensate for missing
 kernel features or inaccessible host MEI firmware.
 
+## Review-driven validation evidence (not product changes)
+
+- `hdcp/verify_android15_r86s_build.sh` now records `repo manifest -r`,
+  actual device/kernel/Widevine/HWC source SHAs, prebuilt binary SHA-256,
+  explicit presence of #15's HWC3 patch, build logs and available output
+  hashes. Its success is an **actual Android build gate**, not a substitute
+  for hardware HDCP. Its output must be linked to product #15/#10 before merge.
+- `hdcp/check_android_drm.sh` attempts time-series read-only
+  `modetest -M i915 -c -p` sampling in the Android guest and separately
+  records connector/hotplug information. If `modetest` or access to DRM
+  properties is unavailable, the result is **unverified**, not a pass.
+- Widevine L3 acceptance is sequential: valid DRM factory and provisioning,
+  `openSession`, **legitimately licensed** HDCP-free Widevine encrypted DASH
+  playback, then an HDCP-required license (accept/reject exactly as policy
+  demands), then output-protection loss and recovery. No ClearKey substitution,
+  no synthetic connected HDCP level or L1 claim.
+- Independent KMS `Enabled` is not proof of vendor Widevine L3 output-policy
+  enforcement. Never display content requiring HDCP on an unprotected link.
+
 ## Evidence categories
 
 | Proof | Status |
