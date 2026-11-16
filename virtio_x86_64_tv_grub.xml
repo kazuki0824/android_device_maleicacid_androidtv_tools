@@ -13,7 +13,8 @@
       path="vendor/google/proprietary/widevine-prebuilt"
       name="supremegamers/vendor_google_proprietary_widevine-prebuilt"
       remote="github"
-      revision="celadon" />
+      revision="47992c25673ed766155fc52d0e6ae81d9769a06c"
+      upstream="refs/heads/celadon" />
 
   <!-- libndk_translation -->
   <project
