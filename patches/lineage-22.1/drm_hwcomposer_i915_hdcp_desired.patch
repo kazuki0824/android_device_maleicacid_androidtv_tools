@@ -1,12 +1,13 @@
 diff --git a/drm/DrmAtomicStateManager.h b/drm/DrmAtomicStateManager.h
 --- a/drm/DrmAtomicStateManager.h
 +++ b/drm/DrmAtomicStateManager.h
-@@ -108,6 +108,8 @@
+@@ -108,6 +108,9 @@
    std::condition_variable cv_;
    std::mutex mutex_;
    bool exit_thread_{};
-+  // Only attempt optional link protection once for this physical pipeline.
-+  bool hdcp_request_attempted_{};
++  // Observed DRM connector status only, never synthetic HDCP success.
++  uint32_t hdcp_connector_id_{};
++  std::optional<uint64_t> last_hdcp_status_;
  };
  
  }  // namespace android
@@ -28,40 +29,64 @@ diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
  
  namespace android {
  
-@@ -202,6 +204,43 @@
-     return err;
+@@ -170,6 +172,67 @@
+     }
    }
  
-+  // Independently request link-level HDCP on the native i915 HDMI output.
-+  // Keep the request on the existing DRM-master device. Never fail a normal
-+  // frame because HDCP is unsupported or its negotiation has not succeeded.
-+  // This does not make the Widevine L3 DRM plug-in HDCP-policy compliant.
-+  if (!hdcp_request_attempted_ && connector->IsConnected() &&
-+      connector->GetName().rfind("HDMI-A-", 0) == 0) {
++  // Use the existing HWC3 atomic request. A second standalone commit would
++  // race the ordinary DRM_MODE_ATOMIC_NONBLOCK presentation. The Linux kernel
++  // owns the Desired -> Enabled transition and Desired-state reauthentication.
++  DrmModeAtomicReqUnique unprotected_pset(nullptr, [](drmModeAtomicReq *p) {
++    drmModeAtomicFree(p);
++  });
++  bool hdcp_in_commit = false;
++  if (!args.test_only) {
 +    char gpu[PROPERTY_VALUE_MAX] = {};
-+    property_get("ro.vendor.graphics.gpu", gpu, "");
 +    char product[PROPERTY_VALUE_MAX] = {};
++    property_get("ro.vendor.graphics.gpu", gpu, "");
 +    property_get("ro.product.device", product, "");
 +    if (std::strcmp(gpu, "i915") == 0 &&
 +        std::strcmp(product, "r86s_virtio_tv") == 0) {
-+      hdcp_request_attempted_ = true;
-+      DrmProperty protection;
-+      if (drm->GetProperty(connector->GetId(), DRM_MODE_OBJECT_CONNECTOR,
-+                           "Content Protection", &protection) == 0) {
-+        const auto [desired, enum_err] =
-+            protection.GetEnumValueWithName("Desired");
-+        if (enum_err == 0) {
-+          auto hdcp_pset = MakeDrmModeAtomicReqUnique();
-+          if (hdcp_pset && protection.AtomicSet(*hdcp_pset, desired)) {
-+            const int hdcp_err =
-+                drmModeAtomicCommit(*drm->GetFd(), hdcp_pset.get(),
-+                                    DRM_MODE_ATOMIC_ALLOW_MODESET, drm);
-+            if (hdcp_err != 0) {
-+              ALOGW("HDCP link protection request failed for %s: %d",
-+                    connector->GetName().c_str(), hdcp_err);
-+            } else {
-+              ALOGI("HDCP Desired requested for %s (authentication unverified)",
-+                    connector->GetName().c_str());
++      if (!connector->IsConnected()) {
++        last_hdcp_status_.reset();
++      } else if (connector->GetName().rfind("HDMI-A-", 0) == 0) {
++        if (hdcp_connector_id_ != connector->GetId()) {
++          hdcp_connector_id_ = connector->GetId();
++          last_hdcp_status_.reset();
++        }
++        DrmProperty protection;
++        if (drm->GetProperty(connector->GetId(), DRM_MODE_OBJECT_CONNECTOR,
++                             "Content Protection", &protection) == 0) {
++          const auto [undesired, uerr] =
++              protection.GetEnumValueWithName("Undesired");
++          const auto [desired, derr] =
++              protection.GetEnumValueWithName("Desired");
++          const auto [enabled, eerr] =
++              protection.GetEnumValueWithName("Enabled");
++          const auto state = protection.GetValue();
++          if (state && uerr == 0 && derr == 0 && eerr == 0) {
++            if (last_hdcp_status_ != state) {
++              if (*state == enabled) {
++                ALOGI("HDCP Enabled on %s (link only; L3 policy unverified)",
++                      connector->GetName().c_str());
++              } else if (*state == desired && last_hdcp_status_ &&
++                         *last_hdcp_status_ == enabled) {
++                ALOGW("HDCP lost on %s, kernel reauthentication pending",
++                      connector->GetName().c_str());
++              }
++              last_hdcp_status_ = state;
++            }
++            if (*state == undesired && (!args.active || *args.active)) {
++              // Preserve normal composition if the optional HDCP request
++              // fails. Do not create another atomic commit after presenting.
++              unprotected_pset.reset(drmModeAtomicDuplicate(pset.get()));
++              if (unprotected_pset &&
++                  protection.AtomicSet(*pset, desired)) {
++                hdcp_in_commit = true;
++              } else if (unprotected_pset) {
++                pset.swap(unprotected_pset);
++                unprotected_pset.reset();
++              }
 +            }
 +          }
 +        }
@@ -69,6 +94,22 @@ diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
 +    }
 +  }
 +
-   args.out_fence = MakeSharedFd(out_fence);
+   uint32_t flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
  
-   if (nonblock) {
+   if (args.test_only) {
+@@ -196,7 +259,15 @@
+   }
+ 
+   auto err = drmModeAtomicCommit(*drm->GetFd(), pset.get(), flags, drm);
++  if (err != 0 && hdcp_in_commit && unprotected_pset) {
++    ALOGW("HDCP Desired commit failed (%d); falling back to normal frame",
++          err);
++    out_fence = -1;
++    err = drmModeAtomicCommit(*drm->GetFd(), unprotected_pset.get(), flags,
++                              drm);
++  }
+ 
++
+   if (err != 0) {
+     ALOGE("Failed to commit pset ret=%d\n", err);
+     return err;
