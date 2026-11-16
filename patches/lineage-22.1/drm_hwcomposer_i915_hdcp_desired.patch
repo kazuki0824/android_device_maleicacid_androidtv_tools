@@ -1,23 +1,25 @@
 diff --git a/drm/DrmAtomicStateManager.h b/drm/DrmAtomicStateManager.h
 --- a/drm/DrmAtomicStateManager.h
 +++ b/drm/DrmAtomicStateManager.h
-@@ -108,6 +108,9 @@
+@@ -108,6 +108,10 @@
    std::condition_variable cv_;
    std::mutex mutex_;
    bool exit_thread_{};
 +  // Observed DRM connector status only, never synthetic HDCP success.
 +  uint32_t hdcp_connector_id_{};
 +  std::optional<uint64_t> last_hdcp_status_;
++  std::chrono::steady_clock::time_point next_hdcp_poll_{};
  };
  
  }  // namespace android
 diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
 --- a/drm/DrmAtomicStateManager.cpp
 +++ b/drm/DrmAtomicStateManager.cpp
-@@ -26,12 +26,14 @@
+@@ -26,12 +26,15 @@
  #include <utils/Trace.h>
  
  #include <cassert>
++#include <chrono>
 +#include <cstring>
  
  #include "drm/DrmCrtc.h"
@@ -29,7 +31,7 @@ diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
  
  namespace android {
  
-@@ -170,6 +172,67 @@
+@@ -170,6 +173,77 @@
      }
    }
  
@@ -49,11 +51,20 @@ diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
 +        std::strcmp(product, "r86s_virtio_tv") == 0) {
 +      if (!connector->IsConnected()) {
 +        last_hdcp_status_.reset();
++        next_hdcp_poll_ = {};
 +      } else if (connector->GetName().rfind("HDMI-A-", 0) == 0) {
 +        if (hdcp_connector_id_ != connector->GetId()) {
 +          hdcp_connector_id_ = connector->GetId();
 +          last_hdcp_status_.reset();
++          next_hdcp_poll_ = {};
 +        }
++        // Bound KMS property enumeration (which walks all connector
++        // properties) to 4 Hz instead of every 60/120 Hz frame. A new
++        // connector is checked immediately; the kernel handles reauth once
++        // protection is Desired.
++        const auto now = std::chrono::steady_clock::now();
++        if (now >= next_hdcp_poll_) {
++          next_hdcp_poll_ = now + std::chrono::milliseconds(250);
 +        DrmProperty protection;
 +        if (drm->GetProperty(connector->GetId(), DRM_MODE_OBJECT_CONNECTOR,
 +                             "Content Protection", &protection) == 0) {
@@ -90,6 +101,7 @@ diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
 +            }
 +          }
 +        }
++        }
 +      }
 +    }
 +  }
@@ -97,7 +109,7 @@ diff --git a/drm/DrmAtomicStateManager.cpp b/drm/DrmAtomicStateManager.cpp
    uint32_t flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
  
    if (args.test_only) {
-@@ -196,7 +259,15 @@
+@@ -196,7 +269,15 @@
    }
  
    auto err = drmModeAtomicCommit(*drm->GetFd(), pset.get(), flags, drm);
