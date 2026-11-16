@@ -83,6 +83,12 @@ add_patch \
     "$PATCH_DIR/drm_hwcomposer_actual_composition_change_count.patch" \
     "HWC3 actual composition change count"
 
+# Link-level HDMI HDCP using the existing HWC3 DRM master; no new HWC2 HAL.
+add_patch \
+    external/drm_hwcomposer \
+    "$PATCH_DIR/drm_hwcomposer_i915_hdcp_desired.patch" \
+    "Optional i915 HDMI HDCP Desired request"
+
 declare -A RESET_REPOS=()
 for repo in "${PATCH_REPOS[@]}"; do
     if [[ -z "${RESET_REPOS[$repo]+x}" ]]; then
