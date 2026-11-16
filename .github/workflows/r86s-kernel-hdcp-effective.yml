@@ -47,7 +47,10 @@ jobs:
           actual = subprocess.check_output(["git", "-C", str(device), "rev-parse", "HEAD"], text=True).strip()
           assert actual == project.get("revision"), (actual, project.get("revision"))
           fragment = "../../../../../../device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv/configs/kernel/hdcp.config"
-          assert fragment in (device / "r86s_virtio_tv/BoardConfig.mk").read_text()
+          board = (device / "r86s_virtio_tv/BoardConfig.mk").read_text()
+          assert fragment in board
+          for module in ("mei.ko", "mei-me.ko", "mei_hdcp.ko", "i915.ko"):
+            assert module in board, f"Missing module load entry: {module}"
           resolved = (root / "kernel/virt/virtio/arch/x86/configs" / fragment).resolve()
           assert resolved == (device / "r86s_virtio_tv/configs/kernel/hdcp.config").resolve()
           print("Product-owned fragment path and device revision verified")

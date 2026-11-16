@@ -51,10 +51,13 @@ The product's [device PR #10](https://github.com/kazuki0824/virtio_x86_64_tv_gru
 now adds `r86s_virtio_tv/configs/kernel/hdcp.config` with
 `CONFIG_INTEL_MEI=m`, `CONFIG_INTEL_MEI_ME=m` and
 `CONFIG_INTEL_MEI_HDCP=m`, connected through the product-specific
-`TARGET_KERNEL_CONFIG` in `r86s_virtio_tv/BoardConfig.mk`.
+`TARGET_KERNEL_CONFIG` in `r86s_virtio_tv/BoardConfig.mk`. That product
+also lists `mei.ko`, `mei-me.ko`, `mei_hdcp.ko`, and `i915.ko` in
+`BOARD_VENDOR_KERNEL_MODULES_LOAD`, so LineageOS can generate vendor_dlkm's
+`modules.load` from the built modules.
 This uses the established product-owned Kconfig fragment mechanism.
 Temporary CI verifies the source wiring and pin to device SHA
-`744f8c5d7b1a9d12f307d47aad6cb87984fcda08`. Source wiring alone does not prove that a prebuilt kernel
+`2b152fd5242075b9ca7730b2256eb7eb5aff1554`. Source wiring alone does not prove that a prebuilt kernel
 uses the fragment or that these modules are packaged and loadable.
 Inspect the effective kernel `.config` and module inventory before
 asserting HDCP 2.x support.

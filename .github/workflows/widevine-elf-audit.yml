@@ -59,7 +59,7 @@ jobs:
           project = root.find("./project[@path='device/maleicacid/virtio_x86_64_tv_grub']")
           hdcp = root.find("./project[@path='hardware/intel/external/media/hdcp']")
           assert project is not None, "R86S project missing"
-          assert project.get("revision") == "744f8c5d7b1a9d12f307d47aad6cb87984fcda08"
+          assert project.get("revision") == "2b152fd5242075b9ca7730b2256eb7eb5aff1554"
           assert hdcp is not None, "Celadon HDCP source missing"
           widevine = root.find("./project[@path='vendor/google/proprietary/widevine-prebuilt']")
           assert widevine is not None
@@ -71,7 +71,7 @@ jobs:
             hardware/intel/external/media/hdcp \
             vendor/google/proprietary/widevine-prebuilt
           test "$(git -C device/maleicacid/virtio_x86_64_tv_grub rev-parse HEAD)" \
-            = "744f8c5d7b1a9d12f307d47aad6cb87984fcda08"
+            = "2b152fd5242075b9ca7730b2256eb7eb5aff1554"
           test "$(git -C hardware/intel/external/media/hdcp rev-parse HEAD)" \
             = "ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d"
           product_widevine_sha="$(git -C vendor/google/proprietary/widevine-prebuilt rev-parse HEAD)"
@@ -99,6 +99,11 @@ jobs:
               assert symbol in fragment.splitlines(), f"R86S HDCP config missing {symbol}"
           target = "../../../../../../device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv/configs/kernel/hdcp.config"
           assert target in board
+          load_modules = ["mei.ko", "mei-me.ko", "mei_hdcp.ko", "i915.ko"]
+          for module in load_modules:
+              assert module in board, f"Missing R86S boot module: {module}"
+          assert [board.index(module) for module in load_modules] == sorted(board.index(module) for module in load_modules)
+          print("PASS: R86S BoardConfig declares MEI/HDCP/i915 kernel modules for modules.load")
           print("PASS: R86S BoardConfig references product-owned MEI/HDCP kernel fragment")
           print("NOTE: source fragment is NOT effective .config or verified installed modules")
           common_mk = Path("device/maleicacid/virtio_x86_64_tv_grub/lineage_x86_64_tv_common.mk").read_text()
