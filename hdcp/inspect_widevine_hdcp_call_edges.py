@@ -12,9 +12,9 @@ from pathlib import Path
 COMMIT = "47992c25673ed766155fc52d0e6ae81d9769a06c"
 NAME = "libwvaidl.so"
 HASH = "f609885e2e2285dde0524ed430ad31e445d6e85d1c4e2824067bda015d1415b1"
-TOKENS = ("getHdcpLevels", "GetHdcpCapabilities", "CheckDeviceHdcpStatus", "ApplyConstraints")
-MAX_SYMBOLS = 15
-MAX_INSNS_BYTES = 2048
+TOKENS = ("getHdcpLevels", "queryProperty", "GetHdcpCapabilities", "GetHDCPCapability", "CheckDeviceHdcpStatus", "ApplyConstraints", "HdcpLevel")
+MAX_SYMBOLS = 35
+MAX_INSNS_BYTES = 8192
 
 
 def command(*args):
@@ -60,6 +60,7 @@ def main():
             "- Runtime L3 dispatch, negotiated HDCP level and license behavior are NOT proven.",
             "",
         ]
+        traced = []
         for mangled, addr, size, section in candidates[:MAX_SYMBOLS]:
             human = command("c++filt", mangled).strip()
             end = addr + min(size, MAX_INSNS_BYTES)
@@ -72,6 +73,7 @@ def main():
                     clean = line.strip().split("\t")[-1]
                     if clean not in calls:
                         calls.append(clean[:180])
+            traced.append((human, mangled, calls))
             lines += [
                 f"## {human}",
                 "",
@@ -87,6 +89,36 @@ def main():
 
         if not candidates:
             raise RuntimeError("Missing expected defined HDCP dynamic symbols")
+        lines += [
+            "## Actual HDCP state origin tracing (bounded)", "",
+            "The entries below distinguish direct calls, opaque indirect edges, and",
+            "paths that cannot be recovered from a stripped ELF. No vendor binary",
+            "is executed; Android's DRM AIDL HDCP level must reflect actual DRM",
+            "state and cannot be inferred solely from method names.", "",
+        ]
+        for human, mangled, calls in traced:
+            if any(key in human for key in ("getHdcpLevels", "queryProperty",
+                                            "GetHdcpCapabilities", "CheckDeviceHdcpStatus")):
+                matches = [line for line in calls if
+                           any(key in line for key in ("queryProperty", "GetHdcp",
+                                                        "OEMCrypto", "getHdcp", "CheckDevice"))]
+                indirect = [line for line in calls if
+                            re.search(r"\\b(?:call|jmp)\\s+(?:QWORD PTR|DWORD PTR|r(?:[abcd]x|si|di|[0-9]+))", line)]
+                lines += ["### " + human, "",
+                          "- Direct named HDCP/property calls: " +
+                          (", ".join(matches[:10]) if matches else "not recovered"),
+                          "- Indirect call edges (unresolved): " + str(len(indirect)),
+                          "- Upstream caller and ultimate HDCP property provider: not proven",
+                          ""]
+        lines += [
+            "### Final evidence boundary", "",
+            "- Source of current HDCP level (DRM/KMS, OEMCrypto, vendor service,",
+            "  constant or fallback): **UNRESOLVED by bounded static disassembly**.",
+            "- On-L3-path reachability and fail-closed handling of an HDCP-required",
+            "  license: **UNRESOLVED**; requires runtime/valid license evidence.",
+            "- Do not invent HWC3 AIDL calls or assert HDCP-required L3 playback",
+            "  based on the observed symbols.", "",
+        ]
         lines += [
             "## Architectural decision",
             "",
