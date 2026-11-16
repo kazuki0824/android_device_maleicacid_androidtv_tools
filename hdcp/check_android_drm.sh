@@ -9,6 +9,8 @@ adb shell getprop ro.hardware.hwcomposer
 adb shell getprop init.svc.vendor.hwcomposer-3
 echo '== DRM and composer services =='
 adb shell service list | grep -Ei 'drm|composer' || true
+echo '== SELinux service domain and installed labels (read-only) =='
+adb shell 'ls -lZ /vendor/bin/hw/android.hardware.drm-service.widevine /data/vendor/mediadrm 2>&1; ps -AZ | grep -Ei "widevine|drm" || true' || true
 echo '== DRM HAL state =='
 adb shell dumpsys media.drm || true
 echo '== DRM connectors and kernel HDCP sysfs (if exposed) =='

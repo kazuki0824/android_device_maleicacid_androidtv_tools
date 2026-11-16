@@ -41,7 +41,7 @@ for token in 'drmModeAtomicDuplicate(pset.get())' '"Content Protection"' '"Desir
   fi
 done
 git -C external/drm_hwcomposer rev-parse HEAD > out/hdcp-validation/hwc-source-sha.txt
-git -C external/drm_hwcomposer diff -- "$hwc_source" > out/hdcp-validation/hwc-local-diff.txt || true
+git -C external/drm_hwcomposer diff -- drm/DrmAtomicStateManager.cpp > out/hdcp-validation/hwc-local-diff.txt || true
 for name in android.hardware.drm-service.widevine libwvaidl.so; do
   f="$widevine/$name"
   test -f "$f" || { echo "Missing Widevine prebuilt binary: $f" >&2; exit 3; }
