@@ -1,0 +1,115 @@
+name: R86S HDCP effective kernel Kconfig
+
+on:
+  push:
+    branches:
+      - experiment/r86s-widevine-hdcp-validation-over-pr15
+    paths:
+      - .github/workflows/r86s-kernel-hdcp-effective.yml
+      - hdcp/93-hdcp.xml
+      - hdcp/audit_kernel_hdcp.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-kconfig:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux Kconfig build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flex bison bc libelf-dev libssl-dev
+      - name: Checkout kernel and product device at exact source revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/r86s-hdcp-kconfig"
+          mkdir -p "$root/kernel/virt" "$root/device/maleicacid"
+          git clone -q --depth 1 --filter=blob:none --branch lineage-22.1 \
+            https://github.com/LineageOS/android_kernel_virt_virtio.git \
+            "$root/kernel/virt/virtio"
+          git -C "$root/kernel/virt/virtio" fetch -q --depth 1 origin 4d42ee3d41c6b29318f723a7f718b864e3d7324f
+          git -C "$root/kernel/virt/virtio" checkout -q --detach 4d42ee3d41c6b29318f723a7f718b864e3d7324f
+          git clone -q --depth 1 --branch feature/r86s-hdcp-declarative-integration \
+            https://github.com/kazuki0824/virtio_x86_64_tv_grub.git \
+            "$root/device/maleicacid/virtio_x86_64_tv_grub"
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, subprocess, xml.etree.ElementTree as ET
+          root = Path(os.environ["RUNNER_TEMP"]) / "r86s-hdcp-kconfig"
+          device = root / "device/maleicacid/virtio_x86_64_tv_grub"
+          project = ET.parse("hdcp/93-hdcp.xml").getroot().find("./extend-project[@name='kazuki0824/virtio_x86_64_tv_grub']")
+          assert project is not None
+          actual = subprocess.check_output(["git", "-C", str(device), "rev-parse", "HEAD"], text=True).strip()
+          assert actual == project.get("revision"), (actual, project.get("revision"))
+          fragment = "../../../../../../device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv/configs/kernel/hdcp.config"
+          assert fragment in (device / "r86s_virtio_tv/BoardConfig.mk").read_text()
+          resolved = (root / "kernel/virt/virtio/arch/x86/configs" / fragment).resolve()
+          assert resolved == (device / "r86s_virtio_tv/configs/kernel/hdcp.config").resolve()
+          print("Product-owned fragment path and device revision verified")
+          PY
+      - name: Run real Linux 6.6 Kconfig resolution in Lineage order
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/r86s-hdcp-kconfig"
+          kernel="$root/kernel/virt/virtio"
+          out="$root/out"
+          mkdir -p "$out"
+          while IFS= read -r config_goal; do
+            echo "::group::Resolve Kconfig target $config_goal"
+            make -s -C "$kernel" O="$out" ARCH=x86 "$config_goal"
+            echo "::endgroup::"
+          done <<'CONFIG_GOALS'
+          gki_defconfig
+          lineageos/peripheral/bluetooth.config
+          lineageos/peripheral/wifi.config
+          lineageos/feature/fbcon.config
+          lineageos/virtio.config
+          lineageos/peripheral/passthrough_gpus.config
+          ../../../../../../device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv/configs/kernel/hdcp.config
+          CONFIG_GOALS
+          cp "$out/.config" hdcp-kbuild-effective.config
+          python3 hdcp/audit_kernel_hdcp.py effective \
+            --config "$out/.config" --role guest --hdcp22 \
+            | tee hdcp-kbuild-evidence.md
+          grep -E '^(CONFIG_DRM|CONFIG_DRM_I915|CONFIG_INTEL_MEI|CONFIG_INTEL_MEI_ME|CONFIG_INTEL_MEI_HDCP)=' "$out/.config" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "PASS means resolved Kbuild .config only, not a deployed or compiled kernel" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check modules and packaging logic from actual open-source Makefiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/r86s-hdcp-kconfig/kernel/virt/virtio"
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/LineageOS/android_vendor_lineage/lineage-22.1/build/tasks/kernel.mk -o "$RUNNER_TEMP/kernel.mk"
+          python3 - "$root" "$RUNNER_TEMP/kernel.mk" <<'PY'
+          from pathlib import Path
+          import sys
+          root=Path(sys.argv[1])
+          mei=(root/"drivers/misc/mei/Makefile").read_text()
+          hdcp=(root/"drivers/misc/mei/hdcp/Makefile").read_text()
+          drm=(root/"drivers/gpu/drm/Makefile").read_text()
+          recipe=Path(sys.argv[2]).read_text()
+          for token in ("obj-$(CONFIG_INTEL_MEI) += mei.o", "obj-$(CONFIG_INTEL_MEI_ME) += mei-me.o",
+                        "obj-$(CONFIG_INTEL_MEI_HDCP) += hdcp/"):
+              assert token in mei, token
+          assert "obj-$(CONFIG_INTEL_MEI_HDCP) += mei_hdcp.o" in hdcp
+          assert "obj-$(CONFIG_DRM_I915)" in drm
+          for token in ("modules_install", "all_modules=", "build-image-kernel-modules-lineage"):
+              assert token in recipe, token
+          print("PASS: Kbuild module targets and Lineage module collection/install recipe exist")
+          print("NOT PROVEN: successful .ko compilation, final image inclusion or runtime loading")
+          PY
+      - name: Upload effective Kbuild configuration
+        uses: actions/upload-artifact@v4
+        with:
+          name: r86s-hdcp-kbuild-config
+          path: |
+            hdcp-kbuild-effective.config
+            hdcp-kbuild-evidence.md
+          retention-days: 30
+          if-no-files-found: error
