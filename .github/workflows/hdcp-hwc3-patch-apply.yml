@@ -32,10 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL --retry 3 \
-            "https://raw.githubusercontent.com/kazuki0824/android_device_maleicacid_androidtv_tools/bdd5e7cbaa9743c098a05a59c95e79bc42c6b99c/patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch" \
+            "https://raw.githubusercontent.com/kazuki0824/android_device_maleicacid_androidtv_tools/8797693a798f091e18ff9f71efae856e3307945d/patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch" \
             -o "$RUNNER_TEMP/product-i915-hdcp.patch"
           test -s "$RUNNER_TEMP/product-i915-hdcp.patch"
-          echo 'Audited tools PR #15 HEAD: bdd5e7cbaa9743c098a05a59c95e79bc42c6b99c' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Audited tools PR #15 HEAD: 8797693a798f091e18ff9f71efae856e3307945d' >> "$GITHUB_STEP_SUMMARY"
       - name: Verify actual patch application in production order
         shell: bash
         run: |
@@ -58,6 +58,9 @@ jobs:
           cpp = (root / "drm/DrmAtomicStateManager.cpp").read_text()
           assert "hdcp_request_attempted_" not in h
           assert "last_hdcp_status_" in h
+          assert "next_hdcp_poll_" in h
+          assert "#include <chrono>" in h
+          assert "std::chrono::milliseconds(250)" in cpp
           assert "drmModeAtomicDuplicate(pset.get())" in cpp
           assert "hdcp_in_commit" in cpp
           assert "unprotected_pset.get()" in cpp
@@ -66,6 +69,8 @@ jobs:
           assert '"Content Protection"' in cpp and '"Desired"' in cpp
           assert '"ro.product.device"' in cpp and '"r86s_virtio_tv"' in cpp
           assert "drmModeAtomicCommit" in cpp
+          assert cpp.count('drm->GetProperty(connector->GetId(), DRM_MODE_OBJECT_CONNECTOR') == 1
+          assert cpp.index("if (now >= next_hdcp_poll_)") < cpp.index("drm->GetProperty(connector->GetId(), DRM_MODE_OBJECT_CONNECTOR")
           print("PASS: both product patches applied cleanly to AOSP A15 r14 sources")
           print("NOT PROVEN: A15 compilation, KMS property exposure, physical HDCP authentication")
           PY
