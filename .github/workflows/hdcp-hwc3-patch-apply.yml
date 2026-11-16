@@ -36,6 +36,24 @@ jobs:
             -o "$RUNNER_TEMP/product-i915-hdcp.patch"
           test -s "$RUNNER_TEMP/product-i915-hdcp.patch"
           echo 'Audited tools PR #15 HEAD: 8797693a798f091e18ff9f71efae856e3307945d' >> "$GITHUB_STEP_SUMMARY"
+      - name: Simulate 60/120 Hz KMS enumeration bounds (not runtime latency)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          for hz in (60, 120):
+              next_poll = 0
+              query_count = 0
+              for frame in range(hz * 3):
+                  now = int(frame * 1000 / hz)
+                  if now >= next_poll:
+                      query_count += 1
+                      next_poll = now + 250
+              assert query_count <= 13, (hz, query_count)
+              print(f"PASS: {hz} Hz / 3 s: {query_count} KMS enumeration calls vs {hz * 3} without throttle")
+          # Connector changes reset poll timer: this is a state model,
+          # not measured HWC3 CPU time, actual i915 ioctl count or HDCP latency.
+          print("NOT PROVEN: actual frame latency, ioctl timing or HDCP link behavior")
+          PY
       - name: Verify actual patch application in production order
         shell: bash
         run: |
