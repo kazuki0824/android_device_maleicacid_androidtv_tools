@@ -27,6 +27,15 @@ jobs:
             https://github.com/aosp-mirror-neo/platform_external_drm_hwcomposer.git \
             "$RUNNER_TEMP/drm_hwcomposer"
           git -C "$RUNNER_TEMP/drm_hwcomposer" rev-parse HEAD
+      - name: Fetch the exact product PR #15 HDCP patch (no rebase)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 \
+            "https://raw.githubusercontent.com/kazuki0824/android_device_maleicacid_androidtv_tools/bdd5e7cbaa9743c098a05a59c95e79bc42c6b99c/patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch" \
+            -o "$RUNNER_TEMP/product-i915-hdcp.patch"
+          test -s "$RUNNER_TEMP/product-i915-hdcp.patch"
+          echo 'Audited tools PR #15 HEAD: bdd5e7cbaa9743c098a05a59c95e79bc42c6b99c' >> "$GITHUB_STEP_SUMMARY"
       - name: Verify actual patch application in production order
         shell: bash
         run: |
@@ -34,10 +43,11 @@ jobs:
           src="$RUNNER_TEMP/drm_hwcomposer"
           for patch in \
             patches/lineage-22.1/drm_hwcomposer_actual_composition_change_count.patch \
-            patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch; do
+            "$RUNNER_TEMP/product-i915-hdcp.patch"; do
             echo "Validating: $patch"
-            git -C "$src" apply --check "$GITHUB_WORKSPACE/$patch"
-            git -C "$src" apply "$GITHUB_WORKSPACE/$patch"
+            if [[ "$patch" == /* ]]; then target="$patch"; else target="$GITHUB_WORKSPACE/$patch"; fi
+            git -C "$src" apply --check "$target"
+            git -C "$src" apply "$target"
           done
           git -C "$src" diff --check
           python3 - "$src" <<'PY'
@@ -46,7 +56,13 @@ jobs:
           root = pathlib.Path(sys.argv[1])
           h = (root / "drm/DrmAtomicStateManager.h").read_text()
           cpp = (root / "drm/DrmAtomicStateManager.cpp").read_text()
-          assert "hdcp_request_attempted_" in h
+          assert "hdcp_request_attempted_" not in h
+          assert "last_hdcp_status_" in h
+          assert "drmModeAtomicDuplicate(pset.get())" in cpp
+          assert "hdcp_in_commit" in cpp
+          assert "unprotected_pset.get()" in cpp
+          assert "HDCP Enabled" in cpp
+          assert "drmModeAtomicCommit(*drm->GetFd(), hdcp_pset" not in cpp
           assert '"Content Protection"' in cpp and '"Desired"' in cpp
           assert '"ro.product.device"' in cpp and '"r86s_virtio_tv"' in cpp
           assert "drmModeAtomicCommit" in cpp
