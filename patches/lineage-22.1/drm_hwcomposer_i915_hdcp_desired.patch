@@ -1,7 +1,15 @@
 diff --git a/drm/DrmAtomicStateManager.h b/drm/DrmAtomicStateManager.h
 --- a/drm/DrmAtomicStateManager.h
 +++ b/drm/DrmAtomicStateManager.h
-@@ -108,6 +108,10 @@
+@@ -19,6 +19,7 @@
+ 
+ #include <pthread.h>
+ 
++#include <chrono>
+ #include <memory>
+ #include <optional>
+ 
+@@ -108,6 +109,10 @@
    std::condition_variable cv_;
    std::mutex mutex_;
    bool exit_thread_{};
