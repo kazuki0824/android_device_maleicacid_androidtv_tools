@@ -1,4 +1,6 @@
-# R86S Widevine L3 + HDCP: completed source/PR diff audit (2026-11-16)
+# R86S Widevine L3 + HDCP: historical source/PR diff audit (2026-11-16)
+
+> **Historical snapshot only:** The PR HEADs, changed-file lists and conclusions below describe the original 2026-11-16 audit. As of 2026-11-17, tools PR #15 targets main, includes an HWC3-owned one-shot HDCP Desired patch, and retains the product manifest's `revision="celadon"`. SHA `47992c...` remains a reproducible **ELF audit snapshot**, not a product pin. Temporary verification belongs to PR #22 and must not be merged. Do not treat older statements such as “HWC3 implementation not started” as current status; see [README.md](README.md).
 
 ## Scope and evidence standard
 

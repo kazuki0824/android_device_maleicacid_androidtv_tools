@@ -33,9 +33,9 @@ jobs:
           assert r86s.find("./project[@name='projectceladon/hdcp']") is not None
           widevine = normal.find("./project[@name='supremegamers/vendor_google_proprietary_widevine-prebuilt']")
           assert widevine is not None
-          assert widevine.get("revision") == "47992c25673ed766155fc52d0e6ae81d9769a06c"
-          assert widevine.get("upstream") == "refs/heads/celadon"
-          print("R86S manifest and Widevine prebuilt pin: OK")
+          assert widevine.get("revision") == "celadon"
+          assert widevine.get("upstream") is None
+          print("R86S manifest: product Widevine follows celadon; fixed-SHA ELF audit is independent")
           PY
       - name: Verify real repo manifest resolution and pinned R86S checkout
         shell: bash
@@ -62,8 +62,9 @@ jobs:
           assert project.get("revision") == "72bb65594e7bfa185d64be303dd14f834f334c8b"
           assert hdcp is not None, "Celadon HDCP source missing"
           widevine = root.find("./project[@path='vendor/google/proprietary/widevine-prebuilt']")
-          assert widevine is not None and widevine.get("revision") == "47992c25673ed766155fc52d0e6ae81d9769a06c"
-          print("Merged manifest pins the intended R86S product and audited L3 prebuilts")
+          assert widevine is not None
+          assert widevine.get("revision") in ("celadon", "refs/heads/celadon"), widevine.get("revision")
+          print("Resolved manifest: R86S/device HDCP sources pinned; Widevine celadon is a moving branch")
           PY
           "$RUNNER_TEMP/repo" sync -j2 -c \
             device/maleicacid/virtio_x86_64_tv_grub \
@@ -73,8 +74,11 @@ jobs:
             = "72bb65594e7bfa185d64be303dd14f834f334c8b"
           test "$(git -C hardware/intel/external/media/hdcp rev-parse HEAD)" \
             = "ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d"
-          test "$(git -C vendor/google/proprietary/widevine-prebuilt rev-parse HEAD)" \
-            = "47992c25673ed766155fc52d0e6ae81d9769a06c"
+          product_widevine_sha="$(git -C vendor/google/proprietary/widevine-prebuilt rev-parse HEAD)"
+          echo "Product Widevine celadon checkout: $product_widevine_sha"
+          if [[ "$product_widevine_sha" != "47992c25673ed766155fc52d0e6ae81d9769a06c" ]]; then
+            echo "::notice::Product Widevine checkout differs from the independent fixed-SHA ELF evidence snapshot."
+          fi
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -95,7 +99,7 @@ jobs:
           rc = (prebuilt / "android.hardware.drm-service.widevine.rc").read_text()
           assert 'name: "android.hardware.drm-service.widevine"' in bp
           assert "IDrmFactory/widevine" in rc
-          print("Pinned Widevine L3 prebuilt is present at the product-import path")
+          print("Widevine L3 prebuilt is present at the product-import path (celadon checkout)")
           # Audit Celadon's actual source instead of enforcing daemon absence
           # as a permanent architectural requirement.
           hdcp_root = Path("hardware/intel/external/media/hdcp")
@@ -141,7 +145,7 @@ jobs:
           print("INFO: upstream HWC2-derived internals are allowed and not a blocker")
           print("NOT PROVEN: runtime HDCP, Widevine playback, or full Android 15 build")
           PY
-      - name: Verify pinned Widevine AIDL registration and product policy contract
+      - name: Audit historical fixed-SHA Widevine AIDL snapshot (not product pin)
         shell: bash
         run: |
           set -euo pipefail
@@ -166,7 +170,7 @@ jobs:
           assert hal is not None and hal.findtext("name") == "android.hardware.drm"
           assert hal.findtext("fqname") == "IDrmFactory/widevine"
           assert hal.findtext("version") == "1"
-          print("PASS: pinned Widevine prebuilt declares an AIDL DRM factory, init rc and VINTF")
+          print("PASS: historical ELF-audited Widevine snapshot declares AIDL DRM factory, init rc and VINTF")
           print("NOTE: SELinux/Soong/VINTF were not compiled; runtime service and L3 not proven")
           PY
       - name: Download pinned public prebuilts and inspect without executing

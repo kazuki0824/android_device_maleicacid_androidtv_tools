@@ -1,0 +1,55 @@
+name: Android 15 HWC3 HDCP patch applicability
+
+on:
+  push:
+    branches:
+      - experiment/r86s-widevine-hdcp-validation-over-pr15
+    paths:
+      - .github/workflows/hdcp-hwc3-patch-apply.yml
+      - patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch
+      - patches/lineage-22.1/drm_hwcomposer_actual_composition_change_count.patch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  patch-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone the audited Android 15 drm_hwcomposer tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --branch android-15.0.0_r14 \
+            https://github.com/aosp-mirror-neo/platform_external_drm_hwcomposer.git \
+            "$RUNNER_TEMP/drm_hwcomposer"
+          git -C "$RUNNER_TEMP/drm_hwcomposer" rev-parse HEAD
+      - name: Verify actual patch application in production order
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/drm_hwcomposer"
+          for patch in \
+            patches/lineage-22.1/drm_hwcomposer_actual_composition_change_count.patch \
+            patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch; do
+            echo "Validating: $patch"
+            git -C "$src" apply --check "$GITHUB_WORKSPACE/$patch"
+            git -C "$src" apply "$GITHUB_WORKSPACE/$patch"
+          done
+          git -C "$src" diff --check
+          python3 - "$src" <<'PY'
+          import pathlib
+          import sys
+          root = pathlib.Path(sys.argv[1])
+          h = (root / "drm/DrmAtomicStateManager.h").read_text()
+          cpp = (root / "drm/DrmAtomicStateManager.cpp").read_text()
+          assert "hdcp_request_attempted_" in h
+          assert '"Content Protection"' in cpp and '"Desired"' in cpp
+          assert '"ro.product.device"' in cpp and '"r86s_virtio_tv"' in cpp
+          assert "drmModeAtomicCommit" in cpp
+          print("PASS: both product patches applied cleanly to AOSP A15 r14 sources")
+          print("NOT PROVEN: A15 compilation, KMS property exposure, physical HDCP authentication")
+          PY

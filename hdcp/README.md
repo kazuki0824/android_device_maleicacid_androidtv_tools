@@ -1,120 +1,59 @@
-# R86S HDCP source and product integration — Android 15
+# Temporary R86S Widevine L3 / HDMI HDCP verification (PR #22)
 
-This PR is stacked on #12 and pairs with
-[kazuki0824/virtio_x86_64_tv_grub#10](https://github.com/kazuki0824/virtio_x86_64_tv_grub/pull/10).
-The tools repository owns the optional R86S local manifest; the device repository
-owns product-specific package selection. No post-sync edits to another repository.
+**Temporary Draft PR; do not merge.** This is a read-only/diagnostic companion to the
+[product tools PR #15](https://github.com/kazuki0824/android_device_maleicacid_androidtv_tools/pull/15)
+and [R86S device PR #10](https://github.com/kazuki0824/virtio_x86_64_tv_grub/pull/10).
+PR #15 targets main; PR #22 is stacked immediately above #15.
 
-## Integration
+## Actual product vs temporary verification
 
-When `ANDROID_PRODUCT=r86s_virtio_tv`, `get_android_qcow2.sh` copies
-`hdcp/93-hdcp.xml` as `.repo/local_manifests/zz-hdcp.xml` before
-`repo sync`. Its local filename is deliberately sorted after
-`virtio_x86_64_tv_grub.xml` so `extend-project` can find the project.
-The manifest pins Celadon's HDCP source snapshot at
-`ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d`.
-For the R86S build, the same manifest uses `extend-project` to pin the
-companion device PR #10 commit and its upstream branch. The default QEMU
-product continues to use the device repository's `main`.
-`libhdcpsdk` is **not yet** installed. This is a source-only interim state,
-not a decision that HDCP clients/daemon are unnecessary. The R86S product
-currently defines limited Widevine L3 SELinux permissions; missing rights
-must be tested in a real Android 15 build and at runtime. The Widevine
-prebuilt is pinned to the same revision used by the ELF scanner.
+- **Product tools #15:** includes the narrow
+  `patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch`
+  and registration in `apply_patches.sh`. It attempts a one-shot, best-effort
+  DRM/KMS `Content Protection=Desired` for R86S/i915 HDMI-A after a
+  successful composition. It has **not** proved `Enabled`, reconnect recovery,
+  HDCP version, or DRM license enforcement.
+- **Product device #10:** R86S i915 property and Widevine vendor SELinux labels.
+  Existing LineageOS HWC3 and pre-existing HWC2-derived internals remain.
+  No new HWC2 service, bridge, or second DRM master.
+- **Temporary #22:** local HDCP source overlay, source and ELF audit scripts,
+  GitHub Actions, and diagnostics/build-test driver. Nothing in this PR is
+  required to remain in the merged product.
 
-## Important: not yet end-to-end HDCP
+## Moving product source vs fixed audit snapshot
 
-The existing LineageOS 22.1 AIDL HWC3 service is retained, including
-its upstream internal HWC2-derived display/layer implementation.
-**Our feature must not add any new HWC2 service, adapter, frontend or HWC2
-library dependency**. Celadon's `hdcpd` uses `libhwcservice` to call its
-HWC2 frontend, not to launch a second DRM master; that legacy bridge cannot
-be installed unchanged for this product. A future connector-control
-integration must use the existing single HWC3-owned DRM/KMS path.
+The product's `virtio_x86_64_tv_grub.xml` intentionally specifies
+`revision="celadon"` for
+`supremegamers/vendor_google_proprietary_widevine-prebuilt`.
+The **test-only ELF investigations** fetch
+`47992c25673ed766155fc52d0e6ae81d9769a06c` so the binary evidence is
+repeatable. This audit SHA is **not a product revision pin**. If celadon
+changes, static findings must be rechecked against the actual build checkout.
 
-The HDCP source is present for inspection and future implementation only.
-It is not an installed or running service. Current status: source/product
-integration, not functioning HDCP.
+For experimental R86S source acquisition, `get_android_qcow2.sh` copies
+`hdcp/93-hdcp.xml` to `.repo/local_manifests/zz-hdcp.xml`. This pins
+device PR #10's current SHA and checks out Celadon HDCP code **for inspection**,
+not for installation as a working HDCP daemon. Normal QEMU TV does not take
+this overlay.
 
-## Validation
+## Evidence categories
 
-On Android: `bash hdcp/check_android_drm.sh` runs read-only diagnostics.
-It **does not** prove a Widevine DRM session or decryption.
+| Proof | Status |
+|---|---|
+| Historical Widevine ELF dependencies, HDCP symbols/call edges | Static evidence exists; no runtime guarantee |
+| Actual product `celadon` branch manifest and source sync | Test in `widevine-elf-audit.yml` |
+| Production HWC3 HDCP patch on AOSP Android 15 source | Test via `hdcp-hwc3-patch-apply.yml` (`git apply --check` and application) |
+| Soong HWC3 + Widevine, vendor SELinux, VINTF | **Not run**; use `hdcp/verify_android15_r86s_build.sh` in a prepared A15 tree |
+| Widevine L3 HDCP-free licensed encrypted playback | **Not run** |
+| Real R86S physical HDMI `Desired → Enabled`, loss/reconnect | **Not run** |
+| HDCP-required Widevine L3 license enforcement | **Not run** |
 
-On bare-metal R86S: `sudo modetest -M i915 -c` and kernel logs must show
-a real HDMI connector supporting content protection, with the state advancing
-from Desired to Enabled during a valid authentication. i915/MEI/firmware and the
-sink must be compatible.
+A test APK must actually acquire a Widevine license and decrypt encrypted
+video; ClearKey or unencrypted MP4 does not prove Widevine L3.
+Read-only Android diagnostics: `hdcp/check_android_drm.sh`.
+Host/guest i915, MEI, IOMMU, physical HDMI sink and KMS properties must be
+measured, not inferred from ELF or CI success.
 
-Widevine L3 acceptance independently requires a `MediaDrm` test APK:
-recognize Widevine scheme UUID
-`edef8ba9-79d6-4ace-a3c8-27dcd51d21ed`,
-successfully `openSession()`, and then use Media3 ExoPlayer to acquire
-an explicitly HDCP-free Widevine license and decode actually encrypted
-video frames. Clear MP4 and ClearKey are not equivalent.
-
-## Still required
-
-1. Confirm A15 HWC's DRM connector properties and secure-layer metadata
-   path before implementing an HDCP request mechanism.
-2. Keep the existing LineageOS 22.1 HWC3/DRM code unchanged, even where it
-   internally uses HWC2-derived code. Integrate HDCP only through the existing
-   DRM/KMS owner, without adding any new HWC2 service/adapter/bridge. Establish
-   a supported protection-request source and then implement missing connector
-   negotiation; reuse Celadon logic where compatible.
-3. Verify the R86S policy through Soong and SELinux compilation, plus actual
-   Widevine L3 HAL init, DRM session and HDCP-free encrypted playback.
-4. Verify protected playback and connector authentication on R86S.
-
-
-## Decision: one DRM-master owner for HDCP on A15
-
-- **Owner:** retain the existing Android 15 AIDL HWC3 DRM/KMS owner with all
-  its existing internal dependencies. This feature adds no HWC2 dependency.
-  Celadon's client/daemon path is not inherently a second compositor, but its
-  HWC2-specific bridge must not be installed unchanged; any later HDCP
-  integration must operate through the present HWC3-owned DRM/KMS path.
-- **Kernel contract:** select the actual HDMI/DP connector; inspect
-  `Content Protection` and optional `HDCP Content Type`. The existing
-  DRM-master HWC must issue `Desired` (not `Enabled`) and independently
-  observe the kernel transition to `Enabled`. Report failures or lost
-  protection rather than returning synthetic success.
-- **Android 15 interface:** `IComposerCallback.onHdcpLevelsChanged()` is
-  available. `IComposerClient.startHdcpNegotiation()` is not in A15's
-  interface; do not import A16 AIDL into A15 by editing it locally. The
-  A15-compatible negotiation trigger has to be derived from the existing
-  compositor's actual secure-content inputs and proven with tests.
-- **Protection safety:** do not display protected buffers on unprotected
-  outputs. Do not assert HDCP2.2 based solely on setting `HDCP Content Type`
-  or on an IPC success. The content-license-required HDCP version and KMS
-  link result must agree; otherwise playback must fail safely.
-- **HDCP1.4 vs HDCP2.2:** Type0 can authenticate with 1.x or 2.x. Type1
-  requires 2.x but is not in itself proof of a particular 2.x revision.
-  Confirm the negotiated level through the kernel and playback policy.
-- **Current limit:** no A15 HWC source implementation, A15 build, or physical
-  HDMI/MEI runtime verification has been completed. Those are implementation
-  and hardware acceptance work, not grounds to add an unneeded second HWC.
-
-## Widevine binary dependency evidence
-
-The public `celadon` service and `libwvaidl.so` are x86_64 ELF64, inspected
-by `.github/workflows/widevine-elf-audit.yml`. Both use `dlopen`/`dlsym`
-but neither has `DT_NEEDED` entries for `libhdcpsdk` or
-`libhwcservice`; neither exposes plain ASCII/UTF-16LE tokens for the
-Celadon `hdcpd`, `hwc.info`, or `.sdk_socket` transport.
-
-Both contain the `liboemcrypto.so` dynamic-library-name candidate. It is
-**not** contained in the SupremeGamers prebuilt package. A string reference
-does not establish that `liboemcrypto.so` is mandatory for L3; conditional
-OEMCrypto loading and fallback behavior must be tested on A15.
-
-Static scans do not prove absence of computed library names or runtime
-service/IPC dependencies. Therefore do not claim HDCP-free playback works
-until MediaDrm provisioning, session open and genuinely encrypted content
-decryption have all been tested.
-
-For the no-new-HWC2 constraints and concrete architectural blockers, see
-[HWC3_ONLY_DESIGN.md](HWC3_ONLY_DESIGN.md). This remains a design and source
-integration draft, not functional HDCP.
-
-**Draft; no full A15 build or hardware runtime test has been performed.**
+**Completion:** bring any product-required fixes to #15 or device #10 separately;
+then close #22 **unmerged**. Do not mistake successful syntax/patch/ELF CI for
+an Android 15 build, HDCP authentication, or secure output-policy enforcement.
