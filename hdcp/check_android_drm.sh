@@ -18,6 +18,8 @@ adb shell 'ls -l /sys/class/drm 2>/dev/null; for f in /sys/class/drm/*/status; d
 echo '== Sample real connector Content Protection via modetest, if available =='
 # Reading DRM properties is independent of composing or setting Desired.
 # Require a real DRM/KMS tool in guest; never interpret sysfs status as HDCP.
+evidence_file="${HDCP_KMS_LOG:-${PWD}/r86s-hdcp-kms-samples.log}"
+: > "$evidence_file"
 if adb shell 'command -v modetest >/dev/null 2>&1'; then
   for i in 1 2 3 4 5; do
     echo "== KMS sample $i (UTC $(date -u +%Y-%m-%dT%H:%M:%SZ)) =="
@@ -25,8 +27,12 @@ if adb shell 'command -v modetest >/dev/null 2>&1'; then
     if [[ "$i" -lt 5 ]]; then sleep 2; fi
   done
 else
-  echo 'NOT VERIFIED: modetest unavailable in Android guest; use a matching read-only libdrm test binary with access to /dev/dri/card*'
+  echo 'UNVERIFIED: modetest unavailable in guest; use read-only libdrm with /dev/dri/card* access'\n  echo 'modetest unavailable' >> "$evidence_file"
 fi
+if [[ -f "$(dirname "$0")/classify_kms_hdcp.py" ]]; then
+  python3 "$(dirname "$0")/classify_kms_hdcp.py" "$evidence_file" || echo 'UNVERIFIED: automatic KMS state parsing failed or property unavailable'
+fi
+echo "KMS evidence file: $evidence_file"
 echo 'ACCEPTANCE: capture Undesired -> Desired -> Enabled via actual Content Protection property.'
 echo 'REAUTH: disconnect/reconnect sink and capture Enabled -> Desired -> Enabled, if supported.'
 echo 'FAIL: no Enabled; a successful atomic ioctl alone is not HDCP.'
