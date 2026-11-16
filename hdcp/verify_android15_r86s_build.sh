@@ -19,7 +19,7 @@ test "$(git -C "$device" rev-parse HEAD)" = "72bb65594e7bfa185d64be303dd14f834f3
 }
 # Product manifest deliberately follows the celadon branch, not a SHA.
 # The static ELF audit uses a historical snapshot independently.
-test -d "$widevine/.git" || {
+git -C "$widevine" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
   echo "Widevine source checkout is missing" >&2; exit 3;
 }
 echo "Widevine product checkout SHA: $(git -C "$widevine" rev-parse HEAD)"
