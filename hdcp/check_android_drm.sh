@@ -25,20 +25,20 @@ if adb shell 'command -v modetest >/dev/null 2>&1'; then
   samples="${HDCP_KMS_SAMPLES:-5}"
   interval="${HDCP_KMS_INTERVAL_SECONDS:-2}"
   for ((i=1; i<=samples; i++)); do
-    printf '== KMS sample %d (UTC %s) ==\\n' "$i" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$evidence_file"
+    printf '== KMS sample %d (UTC %s) ==\n' "$i" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$evidence_file"
     rc=0
     output="$(adb shell 'modetest -M i915 -c -p 2>&1' 2>&1)" || rc=$?
-    printf '%s\\n' "$output" | tee -a "$evidence_file"
-    printf 'modetest_exit=%d\\n' "$rc" | tee -a "$evidence_file"
+    printf '%s\n' "$output" | tee -a "$evidence_file"
+    printf 'modetest_exit=%d\n' "$rc" | tee -a "$evidence_file"
     if (( rc != 0 )); then
-      printf 'UNVERIFIED: modetest failed with exit %d on sample %d\\n' "$rc" "$i"
+      printf 'UNVERIFIED: modetest failed with exit %d on sample %d\n' "$rc" "$i"
       kms_rc=2
     fi
     if (( i < samples )); then sleep "$interval"; fi
   done
 else
   echo 'UNVERIFIED: modetest unavailable in guest; use read-only libdrm with /dev/dri/card* access'
-  printf 'modetest unavailable\\n' >> "$evidence_file"
+  printf 'modetest unavailable\n' >> "$evidence_file"
   kms_rc=2
 fi
 if [[ -f "$(dirname "$0")/classify_kms_hdcp.py" ]]; then
