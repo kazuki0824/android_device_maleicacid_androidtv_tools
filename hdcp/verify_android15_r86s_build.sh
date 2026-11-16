@@ -47,7 +47,30 @@ for name in android.hardware.drm-service.widevine libwvaidl.so; do
   test -f "$f" || { echo "Missing Widevine prebuilt binary: $f" >&2; exit 3; }
   sha256sum "$f" >> out/hdcp-validation/prebuilt-hashes.sha256
 done
-printf '%s\n'   "Production tools PR #15 patch: bdd5e7cbaa9743c098a05a59c95e79bc42c6b99c"   "Device PR #10: $(git -C "$device" rev-parse HEAD)"   "Widevine celadon checkout: $(git -C "$widevine" rev-parse HEAD)"   "Kernel source: $(git -C kernel/virt/virtio rev-parse HEAD 2>/dev/null || echo unavailable)"   > out/hdcp-validation/validation-provenance.txt
+# Obtain the *current* product patch revision directly from its branch; never
+# manually duplicate a PR HEAD in this verification script.
+tools_repo="https://github.com/kazuki0824/android_device_maleicacid_androidtv_tools.git"
+tools_branch="refs/heads/feature/r86s-hdcp-over-pr12"
+tools_head="$(git ls-remote "$tools_repo" "$tools_branch" | awk '{print $1}')"
+if [[ ! "$tools_head" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "UNVERIFIED: could not resolve product PR #15 revision" >&2; exit 3
+fi
+patch_url="https://raw.githubusercontent.com/kazuki0824/android_device_maleicacid_androidtv_tools/\${tools_head}/patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch"
+curl -fsSL --retry 3 "$patch_url" -o out/hdcp-validation/product-i915-hdcp.patch
+sha256sum out/hdcp-validation/product-i915-hdcp.patch > out/hdcp-validation/product-patch.sha256
+# Exact reverse-application is a stronger source-level check than string
+# tokens and rejects a stale installed patch after #15 changes.
+if ! git -C external/drm_hwcomposer apply --reverse --check \
+      "$root/out/hdcp-validation/product-i915-hdcp.patch"; then
+  echo "UNVERIFIED: HWC source does not match current PR #15 patch" >&2
+  exit 3
+fi
+printf '%s\n' \
+  "Production tools PR #15 patch revision (resolved): $tools_head" \
+  "Device PR #10: $(git -C "$device" rev-parse HEAD)" \
+  "Widevine celadon checkout: $(git -C "$widevine" rev-parse HEAD)" \
+  "Kernel source: $(git -C kernel/virt/virtio rev-parse HEAD 2>/dev/null || echo unavailable)" \
+  > out/hdcp-validation/validation-provenance.txt
 jobs=4
 logdir="$root/out/hdcp-validation"
 mkdir -p "$logdir"
