@@ -94,6 +94,9 @@ def main():
         return
 
     values = config(args.config)
+    if len(values) < 100:
+        raise SystemExit("UNVERIFIED: supplied file has fewer than 100 config symbols; "
+                         "require a complete effective kernel .config, not a small fragment")
     print("# Effective .config supplied for " + args.role)
     print("Evidence file: " + args.config)
     table(values, "Effective kernel symbols")

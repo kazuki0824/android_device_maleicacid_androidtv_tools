@@ -58,6 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           printf 'CONFIG_DRM=y\nCONFIG_DRM_I915=m\nCONFIG_INTEL_MEI=m\nCONFIG_INTEL_MEI_ME=m\nCONFIG_INTEL_MEI_HDCP=m\n' > "$RUNNER_TEMP/effective.config"
+          for n in $(seq 1 110); do printf 'CONFIG_TEST_FAKE_%03d=y\n' "$n"; done >> "$RUNNER_TEMP/effective.config"
           python3 hdcp/audit_kernel_hdcp.py effective --role guest --hdcp22 --config "$RUNNER_TEMP/effective.config"
           sed -i 's/CONFIG_INTEL_MEI_HDCP=m/# CONFIG_INTEL_MEI_HDCP is not set/' "$RUNNER_TEMP/effective.config"
           if python3 hdcp/audit_kernel_hdcp.py effective --role guest --hdcp22 --config "$RUNNER_TEMP/effective.config"; then

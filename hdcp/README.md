@@ -45,6 +45,47 @@ unloads a device. Distinguish host support from the Android guest's actual
 access to i915/MEI and its physical HDMI connector. No result has been
 collected from the R86S yet.
 
+## Intel i915 / MEI / HDCP kernel prerequisites
+
+[Kernel prerequisite workflow](https://github.com/kazuki0824/android_device_maleicacid_androidtv_tools/actions/workflows/r86s-kernel-hdcp-audit.yml)
+verifies the LineageOS 22.1 *source* contract, including Kconfig dependencies and
+the GPU-passthrough fragment. It **cannot** certify that the guest boots that
+kernel or contains the corresponding modules. A prebuilt Linux 6.6 kernel
+may be selected instead of compiling the inspected source tree.
+
+- Source `gki_defconfig`: `CONFIG_DRM=y`.
+- Source GPU passthrough fragment: `CONFIG_DRM_I915=m`.
+- `CONFIG_INTEL_MEI`, `CONFIG_INTEL_MEI_ME` and
+  `CONFIG_INTEL_MEI_HDCP`: **not specified in the inspected fragments**.
+  That is **not** a conclusion that the effective configuration disables them.
+- The Linux 6.6 i915 HDCP 2.x path references
+  `IS_ENABLED(CONFIG_INTEL_MEI_HDCP)`. The MEI-backed hardware path
+  depends on firmware/device access beyond the Kconfig values.
+- `CONFIG_INTEL_MEI_HDCP` is pertinent to **MEI-backed HDCP 2.x**;
+  its absence alone does not establish that HDCP 1.4 is impossible.
+- `CONFIG_DRM_I915=m` means the driver may be a module. A Kconfig
+  value is not evidence that `i915.ko`, `mei.ko`, `mei_me.ko`,
+  and `mei_hdcp.ko` are installed, loaded and bound to the guest hardware.
+
+On an **Android guest** with the **actual effective kernel config**, run:
+
+```bash
+bash hdcp/check_kernel_hdcp_config.sh guest /path/to/actual/.config
+```
+
+The script also attempts to read `/proc/config.gz` or `/boot/config-$(uname -r)`
+when available. Use the actual booted or packaged kernel config, **not**
+a sparse kernel-source fragment. This is a read-only check.
+On the **Linux host**, use `bash hdcp/check_r86s_host_hdcp.sh` for
+PCI/IOMMU/driver binding and separately inspect its own config with
+`bash hdcp/check_kernel_hdcp_config.sh host /path/to/host/.config`.
+
+If the guest lacks required MEI-HDCP support, the product kernel
+configuration/modules must be addressed in the **production owner**,
+not committed as a build workaround into temporary PR #22.
+The i915/HDCP patch in tools #15 does not compensate for missing
+kernel features or inaccessible host MEI firmware.
+
 ## Evidence categories
 
 | Proof | Status |
