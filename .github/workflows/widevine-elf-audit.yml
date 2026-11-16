@@ -59,7 +59,7 @@ jobs:
           project = root.find("./project[@path='device/maleicacid/virtio_x86_64_tv_grub']")
           hdcp = root.find("./project[@path='hardware/intel/external/media/hdcp']")
           assert project is not None, "R86S project missing"
-          assert project.get("revision") == "72bb65594e7bfa185d64be303dd14f834f334c8b"
+          assert project.get("revision") == "744f8c5d7b1a9d12f307d47aad6cb87984fcda08"
           assert hdcp is not None, "Celadon HDCP source missing"
           widevine = root.find("./project[@path='vendor/google/proprietary/widevine-prebuilt']")
           assert widevine is not None
@@ -71,7 +71,7 @@ jobs:
             hardware/intel/external/media/hdcp \
             vendor/google/proprietary/widevine-prebuilt
           test "$(git -C device/maleicacid/virtio_x86_64_tv_grub rev-parse HEAD)" \
-            = "72bb65594e7bfa185d64be303dd14f834f334c8b"
+            = "744f8c5d7b1a9d12f307d47aad6cb87984fcda08"
           test "$(git -C hardware/intel/external/media/hdcp rev-parse HEAD)" \
             = "ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d"
           product_widevine_sha="$(git -C vendor/google/proprietary/widevine-prebuilt rev-parse HEAD)"
@@ -92,6 +92,15 @@ jobs:
           assert not re.fullmatch(expression, "/vendor/bin/hw/androidXhardware.drm-service.widevine")
           assert "r86s_virtio_tv/sepolicy/vendor" in board
           assert "ro.vendor.graphics.gpu=i915" in packages
+          # R86S keeps kernel config inside the device product, like earth_pt1.config.
+          hdcp_fragment_path = root / "configs/kernel/hdcp.config"
+          fragment = hdcp_fragment_path.read_text()
+          for symbol in ("CONFIG_INTEL_MEI=m", "CONFIG_INTEL_MEI_ME=m", "CONFIG_INTEL_MEI_HDCP=m"):
+              assert symbol in fragment.splitlines(), f"R86S HDCP config missing {symbol}"
+          target = "../../../../../../device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv/configs/kernel/hdcp.config"
+          assert target in board
+          print("PASS: R86S BoardConfig references product-owned MEI/HDCP kernel fragment")
+          print("NOTE: source fragment is NOT effective .config or verified installed modules")
           common_mk = Path("device/maleicacid/virtio_x86_64_tv_grub/lineage_x86_64_tv_common.mk").read_text()
           assert "vendor/google/proprietary/widevine-prebuilt/widevine.mk" in common_mk
           prebuilt = Path("vendor/google/proprietary/widevine-prebuilt")

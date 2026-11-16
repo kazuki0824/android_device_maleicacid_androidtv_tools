@@ -14,7 +14,7 @@ fi
 cd "$root"
 device="device/maleicacid/virtio_x86_64_tv_grub"
 widevine="vendor/google/proprietary/widevine-prebuilt"
-test "$(git -C "$device" rev-parse HEAD)" = "72bb65594e7bfa185d64be303dd14f834f334c8b" || {
+test "$(git -C "$device" rev-parse HEAD)" = "744f8c5d7b1a9d12f307d47aad6cb87984fcda08" || {
   echo "Wrong device PR #10 SHA; apply temporary overlay manifest" >&2; exit 3;
 }
 # Product manifest deliberately follows the celadon branch, not a SHA.

@@ -45,6 +45,20 @@ unloads a device. Distinguish host support from the Android guest's actual
 access to i915/MEI and its physical HDMI connector. No result has been
 collected from the R86S yet.
 
+## R86S product kernel fragment (device #10)
+
+The product's [device PR #10](https://github.com/kazuki0824/virtio_x86_64_tv_grub/pull/10)
+now adds `r86s_virtio_tv/configs/kernel/hdcp.config` with
+`CONFIG_INTEL_MEI=m`, `CONFIG_INTEL_MEI_ME=m` and
+`CONFIG_INTEL_MEI_HDCP=m`, connected through the product-specific
+`TARGET_KERNEL_CONFIG` in `r86s_virtio_tv/BoardConfig.mk`.
+This uses the established product-owned Kconfig fragment mechanism.
+Temporary CI verifies the source wiring and pin to device SHA
+`744f8c5d7b1a9d12f307d47aad6cb87984fcda08`. Source wiring alone does not prove that a prebuilt kernel
+uses the fragment or that these modules are packaged and loadable.
+Inspect the effective kernel `.config` and module inventory before
+asserting HDCP 2.x support.
+
 ## Intel i915 / MEI / HDCP kernel prerequisites
 
 [Kernel prerequisite workflow](https://github.com/kazuki0824/android_device_maleicacid_androidtv_tools/actions/workflows/r86s-kernel-hdcp-audit.yml)
