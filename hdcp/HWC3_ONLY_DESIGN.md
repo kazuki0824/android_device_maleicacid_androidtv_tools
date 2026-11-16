@@ -2,9 +2,10 @@
 
 **Current status, 2026-11-17:** tools product PR #15 has a narrow
 `drm_hwcomposer_i915_hdcp_desired.patch` registered in
-`patches/lineage-22.1/apply_patches.sh`. The patch issues a one-time,
-best-effort `Content Protection=Desired` atomic request on a connected
-R86S/i915 HDMI-A connector, after a successful composition. It does **not**
+`patches/lineage-22.1/apply_patches.sh`. The patch integrates a best-effort `Content Protection=Desired` into the
+existing DRM atomic frame request on an R86S/i915 HDMI-A connector. It reads
+actual KMS protection state, retries if still `Undesired`, and falls back
+to an unmodified frame request after a failed HDCP-added commit. It does **not**
 establish that authentication reaches `Enabled`, that the request is
 recovered after transient failure/link loss, or that Widevine L3 can enforce
 a license requiring HDCP.

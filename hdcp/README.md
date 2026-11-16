@@ -9,9 +9,10 @@ PR #15 targets main; PR #22 is stacked immediately above #15.
 
 - **Product tools #15:** includes the narrow
   `patches/lineage-22.1/drm_hwcomposer_i915_hdcp_desired.patch`
-  and registration in `apply_patches.sh`. It attempts a one-shot, best-effort
-  DRM/KMS `Content Protection=Desired` for R86S/i915 HDMI-A after a
-  successful composition. It has **not** proved `Enabled`, reconnect recovery,
+  and registration in `apply_patches.sh`. It conditionally adds DRM/KMS `Content Protection=Desired` to the
+  normal atomic frame commit for R86S/i915 HDMI-A. It observes actual
+  `Undesired`/`Desired`/`Enabled` states and retries when `Undesired`,
+  falling back to an ordinary frame if an HDCP-added commit fails. It has **not** proved `Enabled`, reconnect recovery,
   HDCP version, or DRM license enforcement.
 - **Product device #10:** R86S i915 property and Widevine vendor SELinux labels.
   Existing LineageOS HWC3 and pre-existing HWC2-derived internals remain.
