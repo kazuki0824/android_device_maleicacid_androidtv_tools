@@ -31,12 +31,16 @@ def classify(raw):
     if any(x is None for x in samples):
         return {"status": "UNVERIFIED", "reason": "unavailable/ambiguous Content Protection property or modetest failure", "states": samples}
     transitions = list(zip(samples, samples[1:]))
-    enabled = "Enabled" in samples
+    latest_state = samples[-1]
+    ever_enabled = "Enabled" in samples
+    currently_enabled = latest_state == "Enabled"
     lost = ("Enabled", "Desired") in transitions
     restored = lost and ("Desired", "Enabled") in transitions[transitions.index(("Enabled", "Desired"))+1:]
-    return {"status": "OBSERVED_ENABLED" if enabled else "NOT_ENABLED",
-            "reason": "KMS properties only; HDCP version and Widevine policy still unverified",
-            "states": samples, "lost": lost, "restored": restored}
+    return {"status": "CURRENTLY_ENABLED" if currently_enabled else "NOT_CURRENTLY_ENABLED",
+            "reason": "Latest observed KMS state only; no proof of HDCP version, future link state or Widevine policy",
+            "states": samples, "latest_state": latest_state,
+            "currently_enabled": currently_enabled, "ever_enabled": ever_enabled,
+            "lost": lost, "restored": restored}
 
 def main():
     ap=argparse.ArgumentParser()
@@ -49,16 +53,22 @@ def main():
             return "== KMS sample 1 ==\n  14 Content Protection:\n    flags: enum\n    enums: Undesired=0 Desired=1 Enabled=2\n    value: %d\nmodetest_exit=%d\n" % (n,exit_code)
         joined="\n".join(sample(s) for s in ("Undesired","Desired","Enabled","Desired","Enabled"))
         result=classify(joined)
-        assert result["status"]=="OBSERVED_ENABLED" and result["lost"] and result["restored"],result
-        assert classify(sample("Desired"))["status"]=="NOT_ENABLED"
+        assert result["status"]=="CURRENTLY_ENABLED" and result["currently_enabled"],result
+        assert result["ever_enabled"] and result["lost"] and result["restored"],result
+        lost=classify("\n".join(sample(s) for s in ("Enabled","Desired")))
+        assert lost["status"]=="NOT_CURRENTLY_ENABLED" and lost["latest_state"]=="Desired",lost
+        assert lost["ever_enabled"] and lost["lost"] and not lost["restored"],lost
+        desired=classify(sample("Desired"))
+        assert desired["status"]=="NOT_CURRENTLY_ENABLED" and not desired["ever_enabled"],desired
         assert classify("== KMS sample 1 ==\nfailed\nmodetest_exit=1")["status"]=="UNVERIFIED"
         assert classify("no DRM properties")["status"]=="UNVERIFIED"
+        assert classify("== KMS sample 1 ==\n  14 Content Protection:\n    flags: enum\n    enums: Undesired=0 Desired=1 Enabled=2\n    value: 2\n  15 Content Protection:\n    flags: enum\n    enums: Undesired=0 Desired=1 Enabled=2\n    value: 1\nmodetest_exit=0")["status"]=="UNVERIFIED"
         print("PASS: synthetic KMS state transitions, loss/reauth, and tool failure are classified")
         return
     if not args.file: ap.error("supply a capture file or --self-test")
     result=classify(Path(args.file).read_text(errors="replace"))
     print("KMS Content Protection: "+result["status"])
-    print("States: "+repr(result["states"]))
+    print("States: "+repr(result["states"]))\n    print("Latest observed state: "+str(result.get("latest_state","UNVERIFIED")))\n    print("Ever observed Enabled: "+str(result.get("ever_enabled",False)))\n    print("Currently observed Enabled: "+str(result.get("currently_enabled",False)))
     print("Reason: "+result["reason"])
     if "lost" in result: print("Link loss observed:",result["lost"]," Reauth observed:",result["restored"])
     if result["status"]=="UNVERIFIED": raise SystemExit(2)

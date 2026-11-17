@@ -50,7 +50,7 @@ sys.exit(0)
     assert evidence.count("== KMS sample") == 2, evidence
     assert evidence.count("modetest_exit=0") == 2, evidence
     assert evidence.count("Content Protection:") == 2, evidence
-    assert "OBSERVED_ENABLED" in success.stdout, success.stdout
+    assert "CURRENTLY_ENABLED" in success.stdout, success.stdout
     env["MOCK_HDCP_FAILURE"] = "1"
     fail = run("bash", script, env=env, check=False)
     assert fail.returncode == 2, fail.stderr + fail.stdout
