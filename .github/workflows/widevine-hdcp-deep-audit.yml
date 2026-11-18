@@ -1,0 +1,41 @@
+name: Pinned Widevine L3 HDCP deep ELF audit
+
+on:
+  push:
+    branches:
+      - experiment/r86s-widevine-hdcp-validation-over-pr15
+    paths:
+      - .github/workflows/widevine-hdcp-deep-audit.yml
+      - hdcp/deep_audit_widevine_hdcp.py
+      - hdcp/inspect_widevine_hdcp_call_edges.py
+      - hdcp/WIDEVINE_L3_HDCP_A_VS_B.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hdcp-policy-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Python source is syntactically valid
+        run: python3 -m py_compile hdcp/deep_audit_widevine_hdcp.py hdcp/inspect_widevine_hdcp_call_edges.py
+      - name: Inspect pinned x86_64 Widevine binaries without executing them
+        env:
+          HDCP_AUDIT_REPORT: widevine-hdcp-static-evidence.md
+        run: python3 hdcp/deep_audit_widevine_hdcp.py
+      - name: Inspect bounded call edges in exported HDCP functions
+        env:
+          HDCP_DISASM_REPORT: widevine-hdcp-call-edges.md
+        run: python3 hdcp/inspect_widevine_hdcp_call_edges.py
+      - name: Publish reproducible static evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: widevine-hdcp-static-evidence
+          path: | 
+            widevine-hdcp-static-evidence.md
+            widevine-hdcp-call-edges.md
+          if-no-files-found: error
+          retention-days: 30

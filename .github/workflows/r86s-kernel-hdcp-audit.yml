@@ -1,0 +1,74 @@
+name: R86S guest kernel i915 / MEI HDCP requirements
+
+on:
+  push:
+    branches:
+      - experiment/r86s-widevine-hdcp-validation-over-pr15
+    paths:
+      - .github/workflows/r86s-kernel-hdcp-audit.yml
+      - hdcp/audit_kernel_hdcp.py
+      - hdcp/check_kernel_hdcp_config.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download actual LineageOS 22.1 kernel configuration sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/hdcp-kernel"
+          mkdir -p "$dest"
+          kernel="https://raw.githubusercontent.com/LineageOS/android_kernel_virt_virtio/4d42ee3d41c6b29318f723a7f718b864e3d7324f"
+          board="https://raw.githubusercontent.com/LineageOS/android_device_virt_virtio_x86_64/lineage-22.1"
+          common="https://raw.githubusercontent.com/LineageOS/android_device_virt_virtio-common/lineage-22.1"
+          curl -fsSL --retry 3 "$kernel/arch/x86/configs/gki_defconfig" -o "$dest/gki"
+          curl -fsSL --retry 3 "$kernel/arch/x86/configs/lineageos/peripheral/passthrough_gpus.config" -o "$dest/gpu"
+          curl -fsSL --retry 3 "$kernel/drivers/misc/mei/Kconfig" -o "$dest/mei-core"
+          curl -fsSL --retry 3 "$kernel/drivers/misc/mei/hdcp/Kconfig" -o "$dest/mei-hdcp"
+          curl -fsSL --retry 3 "$kernel/drivers/gpu/drm/i915/Kconfig" -o "$dest/i915"
+          curl -fsSL --retry 3 "$kernel/drivers/gpu/drm/i915/display/intel_hdcp.c" -o "$dest/intel-hdcp"
+          curl -fsSL --retry 3 "$board/BoardConfig.mk" -o "$dest/board"
+          curl -fsSL --retry 3 "$common/device-common.mk" -o "$dest/kernel-selector"
+      - name: Audit source fragments and distinguish prebuilt kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile hdcp/audit_kernel_hdcp.py
+          bash -n hdcp/check_kernel_hdcp_config.sh
+          python3 hdcp/audit_kernel_hdcp.py source \
+            --base "$RUNNER_TEMP/hdcp-kernel/gki" \
+            --passthrough "$RUNNER_TEMP/hdcp-kernel/gpu" \
+            --mei-core-kconfig "$RUNNER_TEMP/hdcp-kernel/mei-core" \
+            --mei-hdcp-kconfig "$RUNNER_TEMP/hdcp-kernel/mei-hdcp" \
+            --i915-kconfig "$RUNNER_TEMP/hdcp-kernel/i915" \
+            --hdcp-code "$RUNNER_TEMP/hdcp-kernel/intel-hdcp" \
+            --board-config "$RUNNER_TEMP/hdcp-kernel/board" \
+            --kernel-selection "$RUNNER_TEMP/hdcp-kernel/kernel-selector" \
+            | tee kernel-hdcp-source-evidence.md
+          cat kernel-hdcp-source-evidence.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Positive and negative controls for effective kernel .config
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'CONFIG_DRM=y\nCONFIG_DRM_I915=m\nCONFIG_INTEL_MEI=m\nCONFIG_INTEL_MEI_ME=m\nCONFIG_INTEL_MEI_HDCP=m\n' > "$RUNNER_TEMP/effective.config"
+          for n in $(seq 1 110); do printf 'CONFIG_TEST_FAKE_%03d=y\n' "$n"; done >> "$RUNNER_TEMP/effective.config"
+          python3 hdcp/audit_kernel_hdcp.py effective --role guest --hdcp22 --config "$RUNNER_TEMP/effective.config"
+          sed -i 's/CONFIG_INTEL_MEI_HDCP=m/# CONFIG_INTEL_MEI_HDCP is not set/' "$RUNNER_TEMP/effective.config"
+          if python3 hdcp/audit_kernel_hdcp.py effective --role guest --hdcp22 --config "$RUNNER_TEMP/effective.config"; then
+            echo "::error::Missing MEI HDCP was erroneously accepted"
+            exit 1
+          fi
+          echo "Checker negative control passed"
+      - name: Upload kernel source-only evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: r86s-kernel-hdcp-source-evidence
+          path: kernel-hdcp-source-evidence.md
+          retention-days: 30

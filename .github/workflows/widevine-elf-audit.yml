@@ -1,0 +1,244 @@
+name: Widevine ELF dependency audit
+
+on:
+  push:
+    branches:
+      - experiment/r86s-widevine-hdcp-validation-over-pr15
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-widevine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify manifest and build-script contract
+        shell: bash
+        run: |
+          bash -n get_android_qcow2.sh hdcp/analyze_widevine_elf.sh hdcp/check_android_drm.sh hdcp/verify_android15_r86s_build.sh hdcp/check_r86s_host_hdcp.sh
+          python3 hdcp/classify_kms_hdcp.py --self-test
+          python3 hdcp/test_review_regressions.py
+          python3 hdcp/test_build_driver_path.py
+          test -s hdcp/AUDIT_CELADON_WIDEVINE_L3.md
+          test -s hdcp/HWC3_ONLY_DESIGN.md
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          normal = ET.parse("virtio_x86_64_tv_grub.xml").getroot()
+          r86s = ET.parse("hdcp/93-hdcp.xml").getroot()
+          p = normal.find("./project[@name='kazuki0824/virtio_x86_64_tv_grub']")
+          x = r86s.find("./extend-project[@name='kazuki0824/virtio_x86_64_tv_grub']")
+          assert p is not None and p.attrib.get("revision") == "main"
+          assert x is not None and x.attrib.get("path") == p.attrib.get("path")
+          assert len(x.attrib["revision"]) == 40 and x.attrib["upstream"].startswith("refs/heads/")
+          assert r86s.find("./project[@name='projectceladon/hdcp']") is not None
+          widevine = normal.find("./project[@name='supremegamers/vendor_google_proprietary_widevine-prebuilt']")
+          assert widevine is not None
+          assert widevine.get("revision") == "celadon"
+          assert widevine.get("upstream") is None
+          print("R86S manifest: product Widevine follows celadon; fixed-SHA ELF audit is independent")
+          PY
+      - name: Verify real repo manifest resolution and pinned R86S checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$RUNNER_TEMP/repo"
+          chmod +x "$RUNNER_TEMP/repo"
+          mkdir -p "$RUNNER_TEMP/r86s-repo-smoke"
+          cd "$RUNNER_TEMP/r86s-repo-smoke"
+          "$RUNNER_TEMP/repo" init -u https://github.com/LineageOS/android.git -b lineage-22.1
+          mkdir -p .repo/local_manifests
+          cp "$GITHUB_WORKSPACE"/*.xml .repo/local_manifests/
+          cp "$GITHUB_WORKSPACE"/hdcp/93-hdcp.xml .repo/local_manifests/zz-hdcp.xml
+          "$RUNNER_TEMP/repo" manifest -o manifest-resolved.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = ET.parse("manifest-resolved.xml").getroot()
+          project = root.find("./project[@path='device/maleicacid/virtio_x86_64_tv_grub']")
+          hdcp = root.find("./project[@path='hardware/intel/external/media/hdcp']")
+          assert project is not None, "R86S project missing"
+          assert project.get("revision") == "2b152fd5242075b9ca7730b2256eb7eb5aff1554"
+          assert hdcp is not None, "Celadon HDCP source missing"
+          widevine = root.find("./project[@path='vendor/google/proprietary/widevine-prebuilt']")
+          assert widevine is not None
+          assert widevine.get("revision") in ("celadon", "refs/heads/celadon"), widevine.get("revision")
+          print("Resolved manifest: R86S/device HDCP sources pinned; Widevine celadon is a moving branch")
+          PY
+          "$RUNNER_TEMP/repo" sync -j2 -c \
+            device/maleicacid/virtio_x86_64_tv_grub \
+            hardware/intel/external/media/hdcp \
+            vendor/google/proprietary/widevine-prebuilt
+          test "$(git -C device/maleicacid/virtio_x86_64_tv_grub rev-parse HEAD)" \
+            = "2b152fd5242075b9ca7730b2256eb7eb5aff1554"
+          test "$(git -C hardware/intel/external/media/hdcp rev-parse HEAD)" \
+            = "ccd30e43b3205e22aff9d2aa09a11aa0d4f3870d"
+          product_widevine_sha="$(git -C vendor/google/proprietary/widevine-prebuilt rev-parse HEAD)"
+          echo "Product Widevine celadon checkout: $product_widevine_sha"
+          if [[ "$product_widevine_sha" != "47992c25673ed766155fc52d0e6ae81d9769a06c" ]]; then
+            echo "::notice::Product Widevine checkout differs from the independent fixed-SHA ELF evidence snapshot."
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path("device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv")
+          board = (root / "BoardConfig.mk").read_text()
+          packages = (root / "device.mk").read_text()
+          te = (root / "sepolicy/vendor/hal_drm_widevine.te").read_text()
+          contexts = (root / "sepolicy/vendor/file_contexts").read_text()
+          expression = contexts.splitlines()[0].split()[0]
+          assert re.fullmatch(expression, "/vendor/bin/hw/android.hardware.drm-service.widevine")
+          assert not re.fullmatch(expression, "/vendor/bin/hw/androidXhardware.drm-service.widevine")
+          assert "r86s_virtio_tv/sepolicy/vendor" in board
+          assert "ro.vendor.graphics.gpu=i915" in packages
+          # R86S keeps kernel config inside the device product, like earth_pt1.config.
+          hdcp_fragment_path = root / "configs/kernel/hdcp.config"
+          fragment = hdcp_fragment_path.read_text()
+          for symbol in ("CONFIG_INTEL_MEI=m", "CONFIG_INTEL_MEI_ME=m", "CONFIG_INTEL_MEI_HDCP=m"):
+              assert symbol in fragment.splitlines(), f"R86S HDCP config missing {symbol}"
+          target = "../../../../../../device/maleicacid/virtio_x86_64_tv_grub/r86s_virtio_tv/configs/kernel/hdcp.config"
+          assert target in board
+          load_modules = ["mei.ko", "mei-me.ko", "mei_hdcp.ko", "i915.ko"]
+          for module in load_modules:
+              assert module in board, f"Missing R86S boot module: {module}"
+          assert [board.index(module) for module in load_modules] == sorted(board.index(module) for module in load_modules)
+          print("PASS: R86S BoardConfig declares MEI/HDCP/i915 kernel modules for modules.load")
+          print("PASS: R86S BoardConfig references product-owned MEI/HDCP kernel fragment")
+          print("NOTE: source fragment is NOT effective .config or verified installed modules")
+          common_mk = Path("device/maleicacid/virtio_x86_64_tv_grub/lineage_x86_64_tv_common.mk").read_text()
+          assert "vendor/google/proprietary/widevine-prebuilt/widevine.mk" in common_mk
+          prebuilt = Path("vendor/google/proprietary/widevine-prebuilt")
+          bp = (prebuilt / "Android.bp").read_text()
+          rc = (prebuilt / "android.hardware.drm-service.widevine.rc").read_text()
+          assert 'name: "android.hardware.drm-service.widevine"' in bp
+          assert "IDrmFactory/widevine" in rc
+          print("Widevine L3 prebuilt is present at the product-import path (celadon checkout)")
+          # Audit Celadon's actual source instead of enforcing daemon absence
+          # as a permanent architectural requirement.
+          hdcp_root = Path("hardware/intel/external/media/hdcp")
+          daemon_bp = (hdcp_root / "daemon/Android.bp").read_text()
+          port = (hdcp_root / "daemon/portmanager_android.cpp").read_text()
+          sdk_bp = (hdcp_root / "sdk/Android.bp").read_text()
+          assert 'name: "hdcpd"' in daemon_bp
+          assert '"libhwcservice"' in daemon_bp
+          assert "HwcService_Connect" in port
+          assert "HwcService_Video_EnableHDCPSession_ForDisplay" in port
+          assert 'name: "libhdcpsdk"' in sdk_bp
+          print("R86S Widevine labels and Celadon HWC-integrated HDCP source: OK")
+          print("NOTE: no Android 15 build, HDCP authentication, or L3 playback was tested")
+          PY
+      - name: Compare upstream Widevine SELinux policy without granting broad rights
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          from pathlib import Path
+          rev = "47992c25673ed766155fc52d0e6ae81d9769a06c"
+          url = ("https://raw.githubusercontent.com/supremegamers/"
+                 "vendor_google_proprietary_widevine-prebuilt/" + rev +
+                 "/sepolicy/gen/gen_common/hal_drm_widevine.te")
+          request = urllib.request.Request(url, headers={"User-Agent":"R86S-PolicyReview/1"})
+          upstream = urllib.request.urlopen(request, timeout=45).read().decode()
+          local = Path("hdcp/93-hdcp.xml")
+          assert local.is_file()
+          # Device PR is pinned by the test overlay; inspect the exact public SHA.
+          import xml.etree.ElementTree as ET
+          project = ET.parse(local).getroot().find("./extend-project[@name='kazuki0824/virtio_x86_64_tv_grub']")
+          assert project is not None
+          sha = project.attrib["revision"]
+          policy_url = ("https://raw.githubusercontent.com/kazuki0824/virtio_x86_64_tv_grub/"
+                        + sha + "/r86s_virtio_tv/sepolicy/vendor/hal_drm_widevine.te")
+          device = urllib.request.urlopen(policy_url, timeout=45).read().decode()
+          def rules(text):
+              return [line.strip() for line in text.splitlines() if line.strip()
+                      and not line.lstrip().startswith("#")]
+          candidates = [rule for rule in rules(upstream) if rule not in rules(device)]
+          report = ["# Widevine L3 vendor SELinux source-policy comparison", "",
+                    "Upstream snapshot: " + rev,
+                    "R86S device commit: " + sha, "",
+                    "## Rules present upstream but omitted by R86S (not automatically required)", ""]
+          report += ["- " + r.replace(chr(96), chr(39)) for r in candidates]
+          report += ["", "No omission is proof of runtime non-use. Audit Android 15 neverallow",
+                     "and domain transitions with a real build; grant only rights demonstrated",
+                     "necessary by AOSP HAL contract, build output or AVC evidence.", ""]
+          assert "hal_server_domain(hal_drm_widevine, hal_drm)" in device
+          assert "init_daemon_domain(hal_drm_widevine)" in device
+          assert "hal_client_domain(hal_drm_widevine, hal_graphics_composer)" not in device
+          out = "\n".join(report)
+          print(out)
+          with open("widevine-sepolicy-comparison.md", "w") as file: file.write(out)
+          PY
+      - name: Upload SELinux policy comparison evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: widevine-r86s-selinux-policy-omissions
+          path: widevine-sepolicy-comparison.md
+          if-no-files-found: error
+          retention-days: 30
+      - name: Audit unchanged upstream HWC3 configuration (no-new-HWC2 policy)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          from pathlib import Path
+          url = "https://raw.githubusercontent.com/LineageOS/android_device_virt_virtio_x86_64/ac3714034586dd5301559c616230621419e2025f/"
+          def get(path):
+              with urllib.request.urlopen(url + path, timeout=45) as resp:
+                  return resp.read().decode()
+          bp = get("hals/hwcomposer/drm/Android.bp")
+          init = get("configs/init/virtio_x86_64-graphics.rc")
+          device = get("device.mk")
+          cfg = Path("hdcp/HWC3_ONLY_DESIGN.md").read_text()
+          assert "android.hardware.composer.hwc3-service.drm.virtio_x86_64" in bp
+          assert "hwc2_device/DrmHwcTwo.cpp" in bp
+          assert "hwc2_device/hwc2_device.cpp" in bp
+          assert "ro.vendor.graphics.gpu=i915" in init
+          assert "android.hardware.composer.hwc3-service.drm.virtio_x86_64" in device
+          assert "no additional HWC2" in cfg
+          # The existing HWC3 binary depends on HWC2-derived source files;
+          # those upstream dependencies are explicitly in-scope to retain.
+          assert "hwc2_device/DrmHwcTwo.cpp" in bp
+          assert "hwc2_device/hwc2_device.cpp" in bp
+          r86s = (Path("hdcp/HWC3_ONLY_DESIGN.md").read_text())
+          assert "no additional HWC2" in r86s
+          print("PASS: existing AIDL HWC3 and i915 are retained")
+          print("INFO: upstream HWC2-derived internals are allowed and not a blocker")
+          print("NOT PROVEN: runtime HDCP, Widevine playback, or full Android 15 build")
+          PY
+      - name: Audit historical fixed-SHA Widevine AIDL snapshot (not product pin)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          rev = "47992c25673ed766155fc52d0e6ae81d9769a06c"
+          prefix = f"https://raw.githubusercontent.com/supremegamers/vendor_google_proprietary_widevine-prebuilt/{rev}/"
+          def load(name):
+              with urllib.request.urlopen(prefix + name, timeout=45) as f:
+                  return f.read().decode()
+          bp = load("Android.bp")
+          rc = load("android.hardware.drm-service.widevine.rc")
+          xml = ET.fromstring(load("manifest_android.hardware.drm-service.widevine.xml"))
+          mk = load("widevine.mk")
+          assert 'name: "android.hardware.drm-service.widevine"' in bp
+          assert 'init_rc: ["android.hardware.drm-service.widevine.rc"]' in bp
+          assert "android.hardware.drm-service.widevine" in mk
+          assert "interface aidl android.hardware.drm::IDrmFactory/widevine" in rc
+          hal = xml.find("./hal[@format='aidl']")
+          assert hal is not None and hal.findtext("name") == "android.hardware.drm"
+          assert hal.findtext("fqname") == "IDrmFactory/widevine"
+          assert hal.findtext("version") == "1"
+          print("PASS: historical ELF-audited Widevine snapshot declares AIDL DRM factory, init rc and VINTF")
+          print("NOTE: SELinux/Soong/VINTF were not compiled; runtime service and L3 not proven")
+          PY
+      - name: Download pinned public prebuilts and inspect without executing
+        shell: bash
+        run: bash hdcp/analyze_widevine_elf.sh
