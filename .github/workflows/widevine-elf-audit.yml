@@ -21,6 +21,7 @@ jobs:
           bash -n get_android_qcow2.sh hdcp/analyze_widevine_elf.sh hdcp/check_android_drm.sh hdcp/verify_android15_r86s_build.sh hdcp/check_r86s_host_hdcp.sh
           python3 hdcp/classify_kms_hdcp.py --self-test
           python3 hdcp/test_review_regressions.py
+          python3 hdcp/test_build_driver_path.py
           test -s hdcp/AUDIT_CELADON_WIDEVINE_L3.md
           test -s hdcp/HWC3_ONLY_DESIGN.md
           python3 - <<'PY'
