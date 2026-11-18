@@ -6,6 +6,7 @@ if (( $# != 1 )); then
   echo "Usage: bash hdcp/verify_android15_r86s_build.sh /path/to/prepared-LineageOS-22.1-tree" >&2
   exit 2
 fi
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 root="$(realpath "$1")"
 if [[ ! -d "$root/.repo" || ! -f "$root/build/envsetup.sh" ]]; then
   echo "An already synced Android source tree is required" >&2
@@ -49,7 +50,7 @@ for name in android.hardware.drm-service.widevine libwvaidl.so; do
 done
 # Obtain the product patch from the actual branch HEAD and prove that the
 # checked-out HWC tree contains that exact patch (fail closed on stale source).
-tools_head="$(bash "${BASH_SOURCE[0]%/*}/verify_product_patch_provenance.sh" \
+tools_head="$(bash "$script_dir/verify_product_patch_provenance.sh" \
   "https://github.com/kazuki0824/android_device_maleicacid_androidtv_tools.git" \
   "refs/heads/feature/r86s-hdcp-over-pr12" \
   "$root/external/drm_hwcomposer" \
