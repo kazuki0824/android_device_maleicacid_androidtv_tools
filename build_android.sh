@@ -19,6 +19,9 @@ bash "$SCRIPTDIR/patches/lineage-22.1/apply_patches.sh"
 sed -i '/defaults: \["maleicacid_tuner_hal2_loom_test_defaults"\],/d' \
     vendor/maleicacid/tv/tuner_hal2/Android.bp
 
+# diskimage-vda does not depend on the board makefile; force rebuilding the
+# replaceable system image when the GPT recipe changes (without touching seeds).
+rm -f "out/target/product/$PRODUCT/disk-vda.img"
 TUNER_AIDL_UPDATE_API=1 "$SCRIPTDIR/docker/build_in_docker.sh" "$PRODUCT"
 
 OUT="out/target/product/$PRODUCT"
