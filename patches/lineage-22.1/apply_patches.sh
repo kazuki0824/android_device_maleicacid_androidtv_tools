@@ -83,6 +83,17 @@ add_patch \
     "$PATCH_DIR/drm_hwcomposer_actual_composition_change_count.patch" \
     "HWC3 actual composition change count"
 
+# Device-specific stock virtio overrides used by both maleicacid TV products.
+add_patch \
+    device/virt/virt-common \
+    "$PATCH_DIR/external_state_virt_common.patch" \
+    "External Android state disks and GRUB boot discovery"
+
+add_patch \
+    device/virt/virtio-common \
+    "$PATCH_DIR/external_state_virtio_common.patch" \
+    "External metadata/persist init aliases"
+
 declare -A RESET_REPOS=()
 for repo in "${PATCH_REPOS[@]}"; do
     if [[ -z "${RESET_REPOS[$repo]+x}" ]]; then
