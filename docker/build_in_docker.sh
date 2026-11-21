@@ -47,5 +47,6 @@ sudo docker run --rm -it \
     if [[ "${TUNER_AIDL_UPDATE_API:-0}" == "1" ]]; then
       m ${M_ARGS} android.hardware.tv.tuner-update-api
     fi
-    m ${M_ARGS} diskimage-vda #otapackage
+    # PERSIST is not written to vda, so explicitly build its FAT32 seed.
+    m ${M_ARGS} diskimage-vda persistimage
   "
