@@ -39,7 +39,7 @@ Options:
                           Default: 16G
   --metadata-qcow2 PATH   Output empty GPT metadata disk (34 MiB).
                           Default: <product-out>/metadata-empty.qcow2
-  --force                 Overwrite output files if they already exist.
+  Existing boot image is replaced; existing userdata and metadata are preserved.
   -h, --help              Show this help.
 USAGE
 }
@@ -67,15 +67,6 @@ assert_file() {
     fi
 }
 
-assert_not_exists_unless_force() {
-    local path="$1"
-    if [[ -e "$path" && "$FORCE" != true ]]; then
-        echo "ERROR: output already exists: $path" >&2
-        echo "       rerun with --force to overwrite" >&2
-        exit 1
-    fi
-}
-
 print_summary() {
     cat <<SUMMARY
 Input PRODUCT_OUT   : $PRODUCT_OUT
@@ -93,7 +84,6 @@ BOOT_QCOW2=""
 USERDATA_QCOW2=""
 METADATA_QCOW2=""
 USERDATA_SIZE="16G"
-FORCE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -120,10 +110,6 @@ while [[ $# -gt 0 ]]; do
         --metadata-qcow2)
             METADATA_QCOW2="$2"
             shift 2
-            ;;
-        --force)
-            FORCE=true
-            shift
             ;;
         -h|--help)
             usage
@@ -171,10 +157,6 @@ mkdir -p "$(dirname "$BOOT_QCOW2")"
 mkdir -p "$(dirname "$USERDATA_QCOW2")"
 mkdir -p "$(dirname "$METADATA_QCOW2")"
 
-assert_not_exists_unless_force "$BOOT_QCOW2"
-assert_not_exists_unless_force "$USERDATA_QCOW2"
-assert_not_exists_unless_force "$METADATA_QCOW2"
-
 # Reject aliases before --force can replace either an input or another output.
 paths=("$BOOT_RAW" "$BOOT_QCOW2" "$USERDATA_QCOW2" "$METADATA_QCOW2")
 declare -A seen_paths=()
@@ -197,29 +179,64 @@ if [[ ${#metadata_partitions[@]} -ne 1 ]]; then
     exit 1
 fi
 
+# Put the boot staging directory on the same filesystem as the target.
 work_dir=$(mktemp -d "${BOOT_QCOW2}.tmp.XXXXXX")
-trap 'rm -rf -- "$work_dir"' EXIT
+seed_dir=""
+trap 'rm -rf -- "$work_dir" "${seed_dir:-}"' EXIT
 
 print_summary
 
-echo "[1/3] Preparing boot disk with external metadata..."
+echo "[1/3] Refreshing boot qcow2 with external metadata..."
+# The boot image still includes vda4 PERSIST; only vda5 metadata is renamed.
 cp --reflink=auto --sparse=always "$BOOT_RAW" "$work_dir/boot.img"
 sgdisk --change-name="${metadata_partitions[0]}:metadata-unused" "$work_dir/boot.img"
 qemu-img convert -f raw -O qcow2 "$work_dir/boot.img" "$work_dir/boot.qcow2"
-
-echo "[2/3] Creating sparse empty userdata qcow2..."
-qemu-img create -f qcow2 "$work_dir/userdata.qcow2" "$USERDATA_SIZE" >/dev/null
-
-echo "[3/3] Creating GPT metadata disk..."
-# Match upstream's 32 MiB metadata partition, plus alignment and GPT overhead.
-truncate -s 34M "$work_dir/metadata.img"
-sgdisk --clear --new=1:2048:+32M --typecode=1:8300 \
-    --change-name=1:metadata "$work_dir/metadata.img"
-qemu-img convert -f raw -O qcow2 "$work_dir/metadata.img" "$work_dir/metadata.qcow2"
-
 mv -f -- "$work_dir/boot.qcow2" "$BOOT_QCOW2"
-mv -f -- "$work_dir/userdata.qcow2" "$USERDATA_QCOW2"
-mv -f -- "$work_dir/metadata.qcow2" "$METADATA_QCOW2"
+
+# State disks are never overwritten. Create the seed in its destination
+# directory, then install via an exclusive hard link (not mv -f / cp -f).
+create_seed_if_missing() {
+    local output="$1" kind="$2"
+    if [[ -e "$output" || -L "$output" ]]; then
+        echo "KEEP: $output (existing state disk)"
+        return 0
+    fi
+
+    seed_dir=$(mktemp -d "${output}.tmp.XXXXXX")
+    case "$kind" in
+        userdata)
+            qemu-img create -f qcow2 "$seed_dir/seed.qcow2" "$USERDATA_SIZE" >/dev/null
+            ;;
+        metadata)
+            truncate -s 34M "$seed_dir/metadata.img"
+            sgdisk --clear --new=1:2048:+32M --typecode=1:8300 \
+                --change-name=1:metadata "$seed_dir/metadata.img"
+            qemu-img convert -f raw -O qcow2 \
+                "$seed_dir/metadata.img" "$seed_dir/seed.qcow2"
+            ;;
+        *)
+            echo "ERROR: unknown seed kind: $kind" >&2
+            return 1
+            ;;
+    esac
+
+    if ln -- "$seed_dir/seed.qcow2" "$output"; then
+        echo "CREATE: $output"
+    elif [[ -e "$output" || -L "$output" ]]; then
+        echo "KEEP: $output (created concurrently)"
+    else
+        echo "ERROR: could not install $output" >&2
+        return 1
+    fi
+    rm -rf -- "$seed_dir"
+    seed_dir=""
+}
+
+echo "[2/3] Provisioning userdata only when absent..."
+create_seed_if_missing "$USERDATA_QCOW2" userdata
+
+echo "[3/3] Provisioning metadata only when absent..."
+create_seed_if_missing "$METADATA_QCOW2" metadata
 
 echo
 echo "Done."
