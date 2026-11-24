@@ -126,7 +126,6 @@ done
 require_repo_root
 require_tool qemu-img
 require_tool sgdisk
-require_tool flock
 
 if [[ -z "$BOOT_RAW" ]]; then
     BOOT_RAW="$PRODUCT_OUT/disk-vda.img"
@@ -180,19 +179,8 @@ if [[ ${#metadata_partitions[@]} -ne 1 ]]; then
     exit 1
 fi
 
-# Lock the existing metadata parent directory rather than creating a
-# .lock file that could collide with any of the disk image paths.
-# This serializes creation of a userdata/metadata pair in that directory.
-metadata_dir="$(dirname "$(realpath -m "$METADATA_QCOW2")")"
-if [[ ! -d "$metadata_dir" ]]; then
-    echo "ERROR: metadata parent is not a directory: $metadata_dir" >&2
-    exit 1
-fi
-exec {state_lock_fd}<"$metadata_dir"
-flock -x "$state_lock_fd"
-
-# Verify that state outputs are regular files; an existing valid symlink
-# to a regular state image is accepted and never replaced.
+# Existing state outputs must be regular files; valid symlinks to regular
+# image files are allowed and never replaced.
 check_state_path() {
     local output="$1"
     if [[ -e "$output" || -L "$output" ]]; then
@@ -243,7 +231,7 @@ qemu-img convert -f raw -O qcow2 "$work_dir/boot.img" "$work_dir/boot.qcow2"
 if [[ -e "$USERDATA_QCOW2" ]]; then
     echo "KEEP: $USERDATA_QCOW2 and $METADATA_QCOW2 (existing state pair)"
 else
-    # Both are absent (validated under the directory lock above).
+    # Both are absent (as validated above); concurrent builds are unsupported.
     # Complete both seeds before publishing either to its final path.
     echo "[2/3] Creating userdata seed..."
     userdata_stage=$(mktemp -d "${USERDATA_QCOW2}.tmp.XXXXXX")
