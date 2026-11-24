@@ -180,10 +180,11 @@ if [[ ${#metadata_partitions[@]} -ne 1 ]]; then
     exit 1
 fi
 
-# Serialize concurrent invocations using the same metadata output.
-# This also prevents either invocation from observing a half-created pair.
-lock_path="$(realpath -m "$METADATA_QCOW2").lock"
-exec {state_lock_fd}>>"$lock_path"
+# Lock the existing metadata parent directory rather than creating a
+# .lock file that could collide with any of the disk image paths.
+# This serializes creation of a userdata/metadata pair in that directory.
+metadata_dir="$(dirname "$(realpath -m "$METADATA_QCOW2")")"
+exec {state_lock_fd}<"$metadata_dir"
 flock -x "$state_lock_fd"
 
 # Verify that state outputs are regular files; an existing valid symlink
