@@ -227,13 +227,12 @@ check_boot_output
 
 # Put boot staging on its destination filesystem, and publish it last.
 work_dir=$(mktemp -d "${BOOT_QCOW2}.tmp.XXXXXX")
-seed_dir=""
-trap 'rm -rf -- "$work_dir" "${seed_dir:-}"' EXIT
+userdata_stage=""
+metadata_stage=""
+trap 'rm -rf -- "$work_dir" "${userdata_stage:-}" "${metadata_stage:-}"' EXIT
 
 print_summary
 
-# Convert boot in a staging directory. Commit it only after the state
-# outputs have been checked/created successfully.
 echo "[1/3] Preparing updated boot qcow2 with external metadata..."
 # Only the GPT partition named metadata is renamed in the output copy;
 # PERSIST stays at its original position, including for non-A/B layouts.
@@ -241,51 +240,28 @@ cp --reflink=auto --sparse=always "$BOOT_RAW" "$work_dir/boot.img"
 sgdisk --change-name="${metadata_partitions[0]}:metadata-unused" "$work_dir/boot.img"
 qemu-img convert -f raw -O qcow2 "$work_dir/boot.img" "$work_dir/boot.qcow2"
 
-# State disks are never overwritten. Create each absent seed atomically.
-create_seed_if_missing() {
-    local output="$1" kind="$2"
-    check_state_path "$output"
-    if [[ -e "$output" || -L "$output" ]]; then
-        echo "KEEP: $output (existing state disk)"
-        return 0
-    fi
+if [[ -e "$USERDATA_QCOW2" ]]; then
+    echo "KEEP: $USERDATA_QCOW2 and $METADATA_QCOW2 (existing state pair)"
+else
+    # Both are absent (validated under the directory lock above).
+    # Complete both seeds before publishing either to its final path.
+    echo "[2/3] Creating userdata seed..."
+    userdata_stage=$(mktemp -d "${USERDATA_QCOW2}.tmp.XXXXXX")
+    qemu-img create -f qcow2 "$userdata_stage/seed.qcow2" "$USERDATA_SIZE" >/dev/null
 
-    seed_dir=$(mktemp -d "${output}.tmp.XXXXXX")
-    case "$kind" in
-        userdata)
-            qemu-img create -f qcow2 "$seed_dir/seed.qcow2" "$USERDATA_SIZE" >/dev/null
-            ;;
-        metadata)
-            truncate -s 34M "$seed_dir/metadata.img"
-            sgdisk --clear --new=1:2048:+32M --typecode=1:8300 \
-                --change-name=1:metadata "$seed_dir/metadata.img"
-            qemu-img convert -f raw -O qcow2 \
-                "$seed_dir/metadata.img" "$seed_dir/seed.qcow2"
-            ;;
-        *)
-            echo "ERROR: unknown seed kind: $kind" >&2
-            return 1
-            ;;
-    esac
+    echo "[3/3] Creating GPT metadata seed..."
+    metadata_stage=$(mktemp -d "${METADATA_QCOW2}.tmp.XXXXXX")
+    truncate -s 34M "$metadata_stage/metadata.img"
+    sgdisk --clear --new=1:2048:+32M --typecode=1:8300 \
+        --change-name=1:metadata "$metadata_stage/metadata.img"
+    qemu-img convert -f raw -O qcow2 \
+        "$metadata_stage/metadata.img" "$metadata_stage/seed.qcow2"
 
-    if ln -T -- "$seed_dir/seed.qcow2" "$output"; then
-        echo "CREATE: $output"
-    elif [[ -e "$output" || -L "$output" ]]; then
-        check_state_path "$output"
-        echo "KEEP: $output (created concurrently)"
-    else
-        echo "ERROR: could not install $output" >&2
-        return 1
-    fi
-    rm -rf -- "$seed_dir"
-    seed_dir=""
-}
-
-echo "[2/3] Provisioning userdata only when absent..."
-create_seed_if_missing "$USERDATA_QCOW2" userdata
-
-echo "[3/3] Provisioning metadata only when absent..."
-create_seed_if_missing "$METADATA_QCOW2" metadata
+    # The two final paths are absent. ln -T publishes without clobbering
+    # unexpected files. A failed publication aborts; no generic rollback.
+    ln -T -- "$userdata_stage/seed.qcow2" "$USERDATA_QCOW2"
+    ln -T -- "$metadata_stage/seed.qcow2" "$METADATA_QCOW2"
+fi
 
 # The only replace operation is for the system disk; GNU mv -T avoids
 # interpreting an unexpected destination directory as a parent path.
