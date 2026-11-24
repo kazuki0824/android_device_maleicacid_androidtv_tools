@@ -126,6 +126,7 @@ done
 require_repo_root
 require_tool qemu-img
 require_tool sgdisk
+require_tool flock
 
 if [[ -z "$BOOT_RAW" ]]; then
     BOOT_RAW="$PRODUCT_OUT/disk-vda.img"
@@ -179,10 +180,14 @@ if [[ ${#metadata_partitions[@]} -ne 1 ]]; then
     exit 1
 fi
 
-# Put the boot staging directory on the same filesystem as the target.
-# Verify that no output path is a directory or a dangling link. A symlink
-# to an existing regular disk image is acceptable for the persistent outputs.
-# This does not impose a new userdata/metadata pairing policy.
+# Serialize concurrent invocations using the same metadata output.
+# This also prevents either invocation from observing a half-created pair.
+lock_path="$(realpath -m "$METADATA_QCOW2").lock"
+exec {state_lock_fd}>>"$lock_path"
+flock -x "$state_lock_fd"
+
+# Verify that state outputs are regular files; an existing valid symlink
+# to a regular state image is accepted and never replaced.
 check_state_path() {
     local output="$1"
     if [[ -e "$output" || -L "$output" ]]; then
@@ -194,11 +199,28 @@ check_state_path() {
 }
 check_state_path "$USERDATA_QCOW2"
 check_state_path "$METADATA_QCOW2"
-if [[ -d "$BOOT_QCOW2" ]]; then
-    echo "ERROR: boot output path is a directory: $BOOT_QCOW2" >&2
+
+# With keydirectory=/metadata/vold/metadata_encryption, a used userdata
+# disk must not be paired with a freshly blank metadata disk (or vice versa).
+# Only the previously impossible one-sided-success path is rejected.
+if [[ -e "$USERDATA_QCOW2" && ! -e "$METADATA_QCOW2" ]] ||
+   [[ ! -e "$USERDATA_QCOW2" && -e "$METADATA_QCOW2" ]]; then
+    echo "ERROR: userdata/metadata images must both exist or both be absent" >&2
     exit 1
 fi
 
+# Unlike state outputs, boot is replaced; reject *all* symlinks to avoid
+# an ambiguous choice between replacing a symlink and its target.
+check_boot_output() {
+    if [[ -L "$BOOT_QCOW2" ||
+          ( -e "$BOOT_QCOW2" && ! -f "$BOOT_QCOW2" ) ]]; then
+        echo "ERROR: boot output is not a regular file or is a symlink: $BOOT_QCOW2" >&2
+        return 1
+    fi
+}
+check_boot_output
+
+# Put boot staging on its destination filesystem, and publish it last.
 work_dir=$(mktemp -d "${BOOT_QCOW2}.tmp.XXXXXX")
 seed_dir=""
 trap 'rm -rf -- "$work_dir" "${seed_dir:-}"' EXIT
@@ -208,7 +230,8 @@ print_summary
 # Convert boot in a staging directory. Commit it only after the state
 # outputs have been checked/created successfully.
 echo "[1/3] Preparing updated boot qcow2 with external metadata..."
-# The boot image still includes vda4 PERSIST; only vda5 metadata is renamed.
+# Only the GPT partition named metadata is renamed in the output copy;
+# PERSIST stays at its original position, including for non-A/B layouts.
 cp --reflink=auto --sparse=always "$BOOT_RAW" "$work_dir/boot.img"
 sgdisk --change-name="${metadata_partitions[0]}:metadata-unused" "$work_dir/boot.img"
 qemu-img convert -f raw -O qcow2 "$work_dir/boot.img" "$work_dir/boot.qcow2"
@@ -261,6 +284,7 @@ create_seed_if_missing "$METADATA_QCOW2" metadata
 
 # The only replace operation is for the system disk; GNU mv -T avoids
 # interpreting an unexpected destination directory as a parent path.
+check_boot_output
 mv -fT -- "$work_dir/boot.qcow2" "$BOOT_QCOW2"
 
 echo
