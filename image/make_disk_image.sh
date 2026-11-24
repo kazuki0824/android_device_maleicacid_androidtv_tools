@@ -184,6 +184,10 @@ fi
 # .lock file that could collide with any of the disk image paths.
 # This serializes creation of a userdata/metadata pair in that directory.
 metadata_dir="$(dirname "$(realpath -m "$METADATA_QCOW2")")"
+if [[ ! -d "$metadata_dir" ]]; then
+    echo "ERROR: metadata parent is not a directory: $metadata_dir" >&2
+    exit 1
+fi
 exec {state_lock_fd}<"$metadata_dir"
 flock -x "$state_lock_fd"
 
