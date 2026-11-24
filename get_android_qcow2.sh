@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPTDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPTDIR"
+cd "$(dirname "$0")"
+SCRIPTDIR="$(dirname "$(realpath "${BASH_SOURCE:-0}")")"
 
 mkdir -p ./build-work
 pushd ./build-work
