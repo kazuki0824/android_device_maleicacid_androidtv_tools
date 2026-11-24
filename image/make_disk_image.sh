@@ -39,7 +39,7 @@ Options:
                           Default: 16G
   --metadata-qcow2 PATH   Output empty GPT metadata disk (34 MiB).
                           Default: <product-out>/metadata-empty.qcow2
-  --force                 Overwrite output files if they already exist.
+  Existing boot image is replaced; existing userdata and metadata are preserved.
   -h, --help              Show this help.
 USAGE
 }
@@ -67,15 +67,6 @@ assert_file() {
     fi
 }
 
-assert_not_exists_unless_force() {
-    local path="$1"
-    if [[ -e "$path" && "$FORCE" != true ]]; then
-        echo "ERROR: output already exists: $path" >&2
-        echo "       rerun with --force to overwrite" >&2
-        exit 1
-    fi
-}
-
 print_summary() {
     cat <<SUMMARY
 Input PRODUCT_OUT   : $PRODUCT_OUT
@@ -93,7 +84,6 @@ BOOT_QCOW2=""
 USERDATA_QCOW2=""
 METADATA_QCOW2=""
 USERDATA_SIZE="16G"
-FORCE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -120,10 +110,6 @@ while [[ $# -gt 0 ]]; do
         --metadata-qcow2)
             METADATA_QCOW2="$2"
             shift 2
-            ;;
-        --force)
-            FORCE=true
-            shift
             ;;
         -h|--help)
             usage
@@ -171,11 +157,7 @@ mkdir -p "$(dirname "$BOOT_QCOW2")"
 mkdir -p "$(dirname "$USERDATA_QCOW2")"
 mkdir -p "$(dirname "$METADATA_QCOW2")"
 
-assert_not_exists_unless_force "$BOOT_QCOW2"
-assert_not_exists_unless_force "$USERDATA_QCOW2"
-assert_not_exists_unless_force "$METADATA_QCOW2"
-
-# Reject aliases before --force can replace either an input or another output.
+# Reject aliases before a boot replacement or seed creation can overwrite inputs.
 paths=("$BOOT_RAW" "$BOOT_QCOW2" "$USERDATA_QCOW2" "$METADATA_QCOW2")
 declare -A seen_paths=()
 for path in "${paths[@]}"; do
@@ -197,29 +179,82 @@ if [[ ${#metadata_partitions[@]} -ne 1 ]]; then
     exit 1
 fi
 
+# Existing state outputs must be regular files; valid symlinks to regular
+# image files are allowed and never replaced.
+check_state_path() {
+    local output="$1"
+    if [[ -e "$output" || -L "$output" ]]; then
+        if [[ ! -f "$output" ]]; then
+            echo "ERROR: state path is not an existing regular file: $output" >&2
+            return 1
+        fi
+    fi
+}
+check_state_path "$USERDATA_QCOW2"
+check_state_path "$METADATA_QCOW2"
+
+# With keydirectory=/metadata/vold/metadata_encryption, a used userdata
+# disk must not be paired with a freshly blank metadata disk (or vice versa).
+# Only the previously impossible one-sided-success path is rejected.
+if [[ -e "$USERDATA_QCOW2" && ! -e "$METADATA_QCOW2" ]] ||
+   [[ ! -e "$USERDATA_QCOW2" && -e "$METADATA_QCOW2" ]]; then
+    echo "ERROR: userdata/metadata images must both exist or both be absent" >&2
+    exit 1
+fi
+
+# Unlike state outputs, boot is replaced; reject *all* symlinks to avoid
+# an ambiguous choice between replacing a symlink and its target.
+check_boot_output() {
+    if [[ -L "$BOOT_QCOW2" ||
+          ( -e "$BOOT_QCOW2" && ! -f "$BOOT_QCOW2" ) ]]; then
+        echo "ERROR: boot output is not a regular file or is a symlink: $BOOT_QCOW2" >&2
+        return 1
+    fi
+}
+check_boot_output
+
+# Put boot staging on its destination filesystem, and publish it last.
 work_dir=$(mktemp -d "${BOOT_QCOW2}.tmp.XXXXXX")
-trap 'rm -rf -- "$work_dir"' EXIT
+userdata_stage=""
+metadata_stage=""
+trap 'rm -rf -- "$work_dir" "${userdata_stage:-}" "${metadata_stage:-}"' EXIT
 
 print_summary
 
-echo "[1/3] Preparing boot disk with external metadata..."
+echo "[1/3] Preparing updated boot qcow2 with external metadata..."
+# Only the GPT partition named metadata is renamed in the output copy;
+# PERSIST stays at its original position, including for non-A/B layouts.
 cp --reflink=auto --sparse=always "$BOOT_RAW" "$work_dir/boot.img"
 sgdisk --change-name="${metadata_partitions[0]}:metadata-unused" "$work_dir/boot.img"
 qemu-img convert -f raw -O qcow2 "$work_dir/boot.img" "$work_dir/boot.qcow2"
 
-echo "[2/3] Creating sparse empty userdata qcow2..."
-qemu-img create -f qcow2 "$work_dir/userdata.qcow2" "$USERDATA_SIZE" >/dev/null
+if [[ -e "$USERDATA_QCOW2" ]]; then
+    echo "KEEP: $USERDATA_QCOW2 and $METADATA_QCOW2 (existing state pair)"
+else
+    # Both are absent (as validated above); concurrent builds are unsupported.
+    # Complete both seeds before publishing either to its final path.
+    echo "[2/3] Creating userdata seed..."
+    userdata_stage=$(mktemp -d "${USERDATA_QCOW2}.tmp.XXXXXX")
+    qemu-img create -f qcow2 "$userdata_stage/seed.qcow2" "$USERDATA_SIZE" >/dev/null
 
-echo "[3/3] Creating GPT metadata disk..."
-# Match upstream's 32 MiB metadata partition, plus alignment and GPT overhead.
-truncate -s 34M "$work_dir/metadata.img"
-sgdisk --clear --new=1:2048:+32M --typecode=1:8300 \
-    --change-name=1:metadata "$work_dir/metadata.img"
-qemu-img convert -f raw -O qcow2 "$work_dir/metadata.img" "$work_dir/metadata.qcow2"
+    echo "[3/3] Creating GPT metadata seed..."
+    metadata_stage=$(mktemp -d "${METADATA_QCOW2}.tmp.XXXXXX")
+    truncate -s 34M "$metadata_stage/metadata.img"
+    sgdisk --clear --new=1:2048:+32M --typecode=1:8300 \
+        --change-name=1:metadata "$metadata_stage/metadata.img"
+    qemu-img convert -f raw -O qcow2 \
+        "$metadata_stage/metadata.img" "$metadata_stage/seed.qcow2"
 
-mv -f -- "$work_dir/boot.qcow2" "$BOOT_QCOW2"
-mv -f -- "$work_dir/userdata.qcow2" "$USERDATA_QCOW2"
-mv -f -- "$work_dir/metadata.qcow2" "$METADATA_QCOW2"
+    # The two final paths are absent. ln -T publishes without clobbering
+    # unexpected files. A failed publication aborts; no generic rollback.
+    ln -T -- "$userdata_stage/seed.qcow2" "$USERDATA_QCOW2"
+    ln -T -- "$metadata_stage/seed.qcow2" "$METADATA_QCOW2"
+fi
+
+# The only replace operation is for the system disk; GNU mv -T avoids
+# interpreting an unexpected destination directory as a parent path.
+check_boot_output
+mv -fT -- "$work_dir/boot.qcow2" "$BOOT_QCOW2"
 
 echo
 echo "Done."

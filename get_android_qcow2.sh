@@ -27,6 +27,6 @@ sed -i '/defaults: \[\"maleicacid_tuner_hal2_loom_test_defaults\"\],/d' \
 TUNER_AIDL_UPDATE_API=1 "${SCRIPTDIR}/docker/build_in_docker.sh" "${PRODUCT}"
 # "${SCRIPTDIR}/image/verify_px4_in_raw.sh" "${PRODUCT}"
 "${SCRIPTDIR}/image/make_disk_image.sh" \
-  --product-out "out/target/product/${PRODUCT}" --force
+  --product-out "out/target/product/${PRODUCT}"
 
 popd
